@@ -1,3 +1,4 @@
+
 /*
 NodeManager is intended to take care on your behalf of all those common tasks a MySensors node has to accomplish, speeding up the development cycle of your projects.
 NodeManager includes the following main components:
@@ -30,36 +31,11 @@ void before() {
   Serial.begin(MY_BAUD_RATE);  
 
   /*
-   * Register below your device specific config
-  */
-
-///////// BATTERY MANAGER
-//   nodeManager.setBatteryMin(2.5);
-//   nodeManager.setBatteryMax(3.3);
-//   nodeManager.setBatteryInternalVcc(false);
-//   nodeManager.setBatteryPin(A0);
-//   nodeManager.setBatteryVoltsPerBit(0.003363075);
-
-///////// POWER MANAGER
-//  nodeManager.setRebootPin(8);
-//  nodeManager.setPowerPins(4,5,1000);
-//  nodeManager.setPowerPins(6,7,1000);
-//  nodeManager.setSleepInterruptPin(false);
-//  nodeManager.setInterrupt(2,CHANGE);
-//  nodeManager.setInterrupt(3,CHANGE);
-//  nodeManager.powerOn();
-
-//////// SLEEP MANAGER
-//  nodeManager.setSleep(SLEEP,10,MINUTES);
-  nodeManager.setSleepMode(SLEEP); 
-  nodeManager.setSleepTime(5);
-  nodeManager.setSleepUnit(SECONDS);
-//  nodeManager.setSleepBetweenSend(10);
-
-  /*
    * Register below your sensors
   */
- 
+
+
+
   /*
    * Register above your sensors
   */

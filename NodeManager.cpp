@@ -10,22 +10,21 @@
 
 // set the vcc and ground pin the sensor is connected to
 void PowerManager::setPowerPins(int ground_pin, int vcc_pin, int wait_time) {
+  _ground_pin = ground_pin;
+  _vcc_pin = vcc_pin;
   #if DEBUG == 1
     Serial.print(F("PWR G="));
-    Serial.print(ground_pin);
+    Serial.print(_ground_pin);
     Serial.print(F(" V="));
-    Serial.println(vcc_pin);
+    Serial.println(_vcc_pin);
   #endif
-  //if (_ground_pin > 0) {
-  if (ground_pin > 0) {
+  if (_ground_pin > 0) {
     // configure the ground pin as output and initialize to low
-    _ground_pin = ground_pin;
     pinMode(_ground_pin, OUTPUT);
     digitalWrite(_ground_pin, LOW);
   }
-  if (vcc_pin > 0) {
+  if (_vcc_pin > 0) {
     // configure the vcc pin as output and initialize to high (power on)
-    _vcc_pin = vcc_pin;
     pinMode(_vcc_pin, OUTPUT);
     digitalWrite(_vcc_pin, HIGH);
   }
@@ -67,7 +66,7 @@ Timer::Timer(NodeManager* node_manager) {
 }
 
 // start the timer
-void Timer::start(long target, int unit) {
+void Timer::start(int target, int unit) {
   set(target,unit);
   start();
 }
@@ -80,51 +79,52 @@ void Timer::stop() {
   _is_running = false;
 }
 
-// setup the timer
-void Timer::set(long target, int unit) {
+// reset the timer
+void Timer::reset() {
   // reset the timer
   _elapsed = 0;
-  _use_millis = false;
   _last_millis = 0;
-  _sleep_time = 0;
+}
+
+// restart the timer
+void Timer::restart() {
+  if (! isRunning()) return;
+  stop();
+  reset();
+  // if using millis(), keep track of the current timestamp for calculating the difference
+  if (! _node_manager->isSleepingNode()) _last_millis = millis();
+  start();
+}
+
+// setup the timer
+void Timer::set(int target, int unit) {
+  reset();
   // save the settings
   _target = target;
-  _unit = unit;
-  if (_unit == MINUTES) {
-    if (_node_manager->isSleepingNode()) {
-      // this is a sleeping node and millis() is not reliable so calculate how long a sleep/wait cycle would last
-      int sleep_unit = _node_manager->getSleepUnit();
-      _sleep_time = (float)_node_manager->getSleepTime();
-      if (sleep_unit == SECONDS) _sleep_time = _sleep_time/60;
-      else if (sleep_unit == HOURS) _sleep_time = _sleep_time*60;
-      else if (sleep_unit == DAYS) _sleep_time = _sleep_time*1440;
-    }
-    else {
-      // this is not a sleeping node, use millis() to keep track of the elapsed time
-      _use_millis = true;
-    }
-  }
+  if (unit == MINUTES) _target = _target * 60;
+  else if (unit == HOURS) _target = _target * 60 *60;
+  else if (unit == DAYS) _target = _target * 60 * 60 *24;
+  _is_running = false;
+  _is_configured = true;
+}
+
+// unset the timer
+void Timer::unset() {
+  stop();
   _is_configured = true;
 }
 
 // update the timer at every cycle
 void Timer::update() {
   if (! isRunning()) return;
-  if (_unit == CYCLES) {
-    // if not a sleeping node, counting the cycles do not make sense
-    if (! _node_manager->isSleepingNode()) return;
-    // just increase the cycle counter
-    _elapsed++;
+  if (_node_manager->isSleepingNode()) {
+    // millis() is not reliable while sleeping so calculate how long a sleep cycle would last in seconds and update the elapsed time
+    _elapsed += _node_manager->getSleepSeconds();
+  } else {
+    // use millis() to calculate the elapsed time in seconds
+    _elapsed = (long)((millis() - _last_millis)/1000);
   }
-  else if (_unit == MINUTES) {
-    // if using millis(), calculate the elapsed minutes, otherwise add a sleep interval
-    if (_use_millis) {
-      _elapsed = (float)(millis() - _last_millis)/1000/60;
-    }
-    else {
-      _elapsed += _sleep_time;
-    }
-  }
+  _first_run = false;
 }
 
 // return true if the time is over
@@ -139,6 +139,7 @@ bool Timer::isOver() {
 
 // return true if the timer is running
 bool Timer::isRunning() {
+  if (! isConfigured()) return false;
   return _is_running;
 }
 
@@ -147,23 +148,14 @@ bool Timer::isConfigured() {
   return _is_configured;
 }
 
-// restart the timer
-void Timer::restart() {
-  if (! isRunning()) return;
-  // reset elapsed
-  _elapsed = 0;
-  // if using millis, keep track of the now timestamp
-  if (_use_millis) _last_millis = millis();
+// return true if this is the first time the timer runs
+bool Timer::isFirstRun() {
+  return _first_run;
 }
 
-// return elapsed minutes so far
+// return elapsed seconds so far
 float Timer::getElapsed() {
   return _elapsed;
-}
-
-// return the configured unit
-int Timer::getUnit() {
-  return _unit;
 }
 
 
@@ -269,14 +261,11 @@ void Sensor::setSamplesInterval(int value) {
 void Sensor::setTrackLastValue(bool value) {
   _track_last_value = value;
 }
-void Sensor::setForceUpdate(int value) {
-  setForceUpdateCycles(value);
-}
-void Sensor::setForceUpdateCycles(int value) {
-  _force_update_timer->start(value,CYCLES);
-}
 void Sensor::setForceUpdateMinutes(int value) {
   _force_update_timer->start(value,MINUTES);
+}
+void Sensor::setForceUpdateHours(int value) {
+  _force_update_timer->start(value,HOURS);
 }
 void Sensor::setValueType(int value) {
   _value_type = value;
@@ -314,14 +303,36 @@ char* Sensor::getValueString() {
   return _last_value_string;
 }
 
-// After how many cycles the sensor will report back its measure (default: 1 cycle)
-void Sensor::setReportIntervalCycles(int value) {
-  _report_timer->start(value,CYCLES);
+// After how many seconds the sensor will report back its measure
+void Sensor::setReportIntervalSeconds(int value) {
+  _report_timer->start(value,SECONDS);
 }
 
-// After how many minutes the sensor will report back its measure (default: 1 cycle)
+// After how many minutes the sensor will report back its measure 
 void Sensor::setReportIntervalMinutes(int value) {
   _report_timer->start(value,MINUTES);
+}
+
+// After how many minutes the sensor will report back its measure 
+void Sensor::setReportIntervalHours(int value) {
+  _report_timer->start(value,HOURS);
+}
+
+// After how many minutes the sensor will report back its measure 
+void Sensor::setReportIntervalDays(int value) {
+  _report_timer->start(value,DAYS);
+}
+
+
+// return true if the report interval has been already configured
+bool Sensor::isReportIntervalConfigured() {
+  return _report_timer->isConfigured();
+}
+
+// listen for interrupts on the given pin so interrupt() will be called when occurring
+void Sensor::setInterrupt(int pin, int mode, int initial) {
+  _interrupt_pin = pin;
+  _node_manager->setInterrupt(pin,mode,initial);
 }
 
 // present the sensor to the gateway and controller
@@ -353,10 +364,12 @@ void Sensor::loop(const MyMessage & message) {
   // update the timers if within a loop cycle
   if (! _isReceive(message)) {
     if (_report_timer->isRunning()) {
+      // store the elapsed time before updating it
+      bool first_run = _report_timer->isFirstRun();
       // update the timer
       _report_timer->update();
-      // if it is not the time yet to report a new measure, just return
-      if (! _report_timer->isOver()) return;
+      // if it is not the time yet to report a new measure, just return (unless the first time)
+      if (! _report_timer->isOver() && ! first_run) return;
     }
     if (_force_update_timer->isRunning()) _force_update_timer->update();
   }
@@ -366,7 +379,6 @@ void Sensor::loop(const MyMessage & message) {
   #endif
   // for numeric sensor requiring multiple samples, keep track of the total
   float total = 0;
-  // keep track of the number of cycles since the last update
   // collect multiple samples if needed
   for (int i = 0; i < _samples; i++) {
     // call the sensor-specific implementation of the main task which will store the result in the _value variable
@@ -382,7 +394,7 @@ void Sensor::loop(const MyMessage & message) {
     if (_value_type == TYPE_INTEGER) total += (float)_value_int;
     else if (_value_type == TYPE_FLOAT) total += _value_float;
     // wait between samples
-    if (_samples_interval > 0) wait(_samples_interval);
+    if (_samples_interval > 0) _node_manager->sleepOrWait(_samples_interval);
   }
   // process the result and send a response back
   if (_value_type == TYPE_INTEGER && total > -1) {
@@ -392,6 +404,7 @@ void Sensor::loop(const MyMessage & message) {
     if (_isReceive(message) || _isWorthSending(avg != _last_value_int))  {
       _last_value_int = avg;
       _send(_msg.set(avg));
+      _value_int = -1;
     }
   }
   // process a float value
@@ -402,6 +415,7 @@ void Sensor::loop(const MyMessage & message) {
     if (_isReceive(message) || _isWorthSending(avg != _last_value_float))  {
       _last_value_float = avg;
       _send(_msg.set(avg, _float_precision));
+      _value_float = -1;
     }
   }
   // process a string value
@@ -410,6 +424,7 @@ void Sensor::loop(const MyMessage & message) {
     if (_isReceive(message) || _isWorthSending(strcmp(_value_string, _last_value_string) != 0))  {
       _last_value_string = _value_string;
       _send(_msg.set(_value_string));
+      _value_string = "";
     }
   }
   // turn the sensor off
@@ -418,6 +433,12 @@ void Sensor::loop(const MyMessage & message) {
   #endif
   // restart the report timer if over
   if (! _isReceive(message) && _report_timer->isRunning() && _report_timer->isOver()) _report_timer->restart();
+}
+
+// receive and handle an interrupt
+void Sensor::interrupt() {
+  // call the implementation of onInterrupt()
+  onInterrupt();
 }
 
 // receive a message from the radio network
@@ -451,7 +472,6 @@ void Sensor::process(Request & request) {
     case 5: setSamples(request.getValueInt()); break;
     case 6: setSamplesInterval(request.getValueInt()); break;
     case 7: setTrackLastValue(request.getValueInt()); break;
-    case 8: setForceUpdateCycles(request.getValueInt()); break;
     case 9: setForceUpdateMinutes(request.getValueInt()); break;
     case 10: setValueType(request.getValueInt()); break;
     case 11: setFloatPrecision(request.getValueInt()); break;
@@ -460,8 +480,11 @@ void Sensor::process(Request & request) {
       case 13: powerOn(); break;
       case 14: powerOff(); break;
     #endif
-    case 15: setReportIntervalCycles(request.getValueInt()); break;
     case 16: setReportIntervalMinutes(request.getValueInt()); break;
+    case 17: setReportIntervalSeconds(request.getValueInt()); break;
+    case 19: setReportIntervalHours(request.getValueInt()); break;
+    case 20: setReportIntervalDays(request.getValueInt()); break;
+    case 18: setForceUpdateHours(request.getValueInt()); break;
     default: return;
   }
   _send(_msg_service.set(function));
@@ -588,6 +611,10 @@ void SensorAnalogInput::onProcess(Request & request) {
   _send(_msg_service.set(function));
 }
 
+// what to do when receiving an interrupt
+void SensorAnalogInput::onInterrupt() {
+}
+
 // read the analog input
 int SensorAnalogInput::_getAnalogRead() {
   #ifndef MY_GATEWAY_ESP8266
@@ -688,7 +715,7 @@ void SensorThermistor::onLoop() {
     Serial.print(F(" V="));
     Serial.print(adc);
     Serial.print(F(" T="));
-    Serial.print(temperature);
+    Serial.println(temperature);
   #endif
   // store the value
   _value_float = temperature;
@@ -711,6 +738,10 @@ void SensorThermistor::onProcess(Request & request) {
     default: return;
   }
   _send(_msg_service.set(function));
+}
+
+// what to do when receiving an interrupt
+void SensorThermistor::onInterrupt() {
 }
 
 /*
@@ -763,6 +794,10 @@ void SensorML8511::onReceive(const MyMessage & message) {
 
 // what to do when receiving a remote message
 void SensorML8511::onProcess(Request & request) {
+}
+
+// what to do when receiving an interrupt
+void SensorML8511::onInterrupt() {
 }
 
 // The Arduino Map function but for floats
@@ -831,6 +866,10 @@ void SensorACS712::onProcess(Request & request) {
   _send(_msg_service.set(function));
 }
 
+// what to do when receiving an interrupt
+void SensorACS712::onInterrupt() {
+}
+
 /*
    SensorRainGauge
 */
@@ -841,75 +880,47 @@ SensorRainGauge::SensorRainGauge(NodeManager* node_manager, int child_id, int pi
   setPresentation(S_RAIN);
   setType(V_RAIN);
   setValueType(TYPE_FLOAT);
-  // create the timer
-  _timer = new Timer(node_manager);
 }
-
-// initialize static variables
-long SensorRainGauge::_last_tip = 0;
-long SensorRainGauge::_count = 0;
 
 // setter/getter
-void SensorRainGauge::setReportInterval(int value) {
-  _report_interval = value;
-}
 void SensorRainGauge::setSingleTip(float value) {
   _single_tip = value;
+}
+void SensorRainGauge::setInitialValue(int value) {
+  _initial_value = value;
 }
 
 // what to do during before
 void SensorRainGauge::onBefore() {
-  // set the pin as input and enabled pull up
-  pinMode(_pin, INPUT_PULLUP);
-  // attach to the pin's interrupt and execute the routine on falling
-  attachInterrupt(digitalPinToInterrupt(_pin), _onTipped, FALLING);
-  // start the timer
-  _timer->start(_report_interval,MINUTES);
+  // configure the interrupt pin so onInterrupt() will be called on tip
+  setInterrupt(_pin,FALLING,_initial_value);
 }
 
 // what to do during setup
 void SensorRainGauge::onSetup() {
 }
 
-// what to do when when receiving an interrupt
-void SensorRainGauge::_onTipped() {
-  long now = millis();
-  // on tipping, two consecutive interrupts are received, ignore the second one
-  if ( (now - _last_tip > 100) || (now < _last_tip) ){
-    // increase the counter
-    _count++;
-    #if DEBUG == 1
-      Serial.println(F("RAIN+"));
-    #endif
-  }
-  _last_tip = now;
-}
-
 // what to do during loop
 void SensorRainGauge::onLoop() {
-  // avoid reporting the same value multiple times
-  _value_float = -1;
-  _timer->update();
-  // time to report 
-  if (_timer->isOver()) {
-    // report the total amount of rain for the last period
-    _value_float = _count * _single_tip;
-    #if DEBUG == 1
-      Serial.print(F("RAIN I="));
-      Serial.print(_child_id);
-      Serial.print(F(" T="));
-      Serial.println(_value_float);
-    #endif
-    // reset the timer
-    _timer->restart();
-  }
+  // do not execute loop if called by an interrupt
+  if (_node_manager->getLastInterruptPin() == _interrupt_pin) return;
+  // time to report the rain so far
+  _value_float = _count * _single_tip;
+  #if DEBUG == 1
+    Serial.print(F("RAIN I="));
+    Serial.print(_child_id);
+    Serial.print(F(" T="));
+    Serial.println(_value_float);
+  #endif
+  // reset the counter
+  _count = 0;
 }
 
 // what to do as the main task when receiving a message
 void SensorRainGauge::onReceive(const MyMessage & message) {
   if (message.getCommand() == C_REQ) {
     // report the total amount of rain for the last period
-    _value_float = _count * _single_tip;    
+    _value_float = _count * _single_tip;
   }
 }
 
@@ -917,11 +928,19 @@ void SensorRainGauge::onReceive(const MyMessage & message) {
 void SensorRainGauge::onProcess(Request & request) {
   int function = request.getFunction();
   switch(function) {
-    case 101: setReportInterval(request.getValueInt()); break;
     case 102: setSingleTip(request.getValueFloat()); break;
     default: return;
   }
   _send(_msg_service.set(function));
+}
+
+// what to do when receiving an interrupt
+void SensorRainGauge::onInterrupt() {
+  // increase the counter
+  _count++;
+  #if DEBUG == 1
+    Serial.println(F("RAIN+"));
+  #endif
 }
 
 /*
@@ -999,6 +1018,10 @@ void SensorDigitalInput::onReceive(const MyMessage & message) {
 // what to do when receiving a remote message
 void SensorDigitalInput::onProcess(Request & request) {
 }
+
+// what to do when receiving an interrupt
+void SensorDigitalInput::onInterrupt() {
+}
 #endif
 
 
@@ -1019,9 +1042,6 @@ void SensorDigitalOutput::onBefore() {
 
 // what to do during setup
 void SensorDigitalOutput::onSetup() {
-  // inform the controller about relay state
-  // send(_msg.set(loadState(_child_id)?LOW:HIGH));
-  _send(_msg.set(_initial_value));
 }
 
 // setter/getter
@@ -1085,6 +1105,10 @@ void SensorDigitalOutput::onProcess(Request & request) {
   _send(_msg_service.set(function));
 }
 
+// what to do when receiving an interrupt
+void SensorDigitalOutput::onInterrupt() {
+}
+
 // write the value to the output
 void SensorDigitalOutput::setStatus(int value) {
   // pre-process the input value
@@ -1106,7 +1130,7 @@ void SensorDigitalOutput::setStatus(int value) {
   }
   _setStatus(value);
   // wait if needed for relay drawing a lot of current
-  if (_wait_after_set > 0) wait(_wait_after_set);
+  if (_wait_after_set > 0) _node_manager->sleepOrWait(_wait_after_set);
   // store the new status so it will be sent to the controller
   _status = value;
   _value_int = value;
@@ -1214,7 +1238,7 @@ void SensorLatchingRelay::_setStatus(int value) {
   // set the value
   digitalWrite(pin, _on_value);
   // wait for the given time before restoring the value to the original value after the pulse
-  wait(_pulse_width);
+  _node_manager->sleepOrWait(_pulse_width);
   digitalWrite(pin, ! _on_value);
   #if DEBUG == 1
     Serial.print(F("LAT I="));
@@ -1257,22 +1281,23 @@ SensorDHT::SensorDHT(NodeManager* node_manager, int child_id, int pin, DHT* dht,
 
 // what to do during before
 void SensorDHT::onBefore() {
-    // initialize the dht library
-    _dht->begin();
 }
 
 // what to do during setup
 void SensorDHT::onSetup() {
+  // initialize the dht library
+  _dht->setup(_pin,_dht_type);
 }
 
 // what to do during loop
 void SensorDHT::onLoop() {
+  _node_manager->sleepOrWait(_dht->getMinimumSamplingPeriod());
+  _dht->readSensor(true);
   // temperature sensor
   if (_sensor_type == SensorDHT::TEMPERATURE) {
     // read the temperature
-    float temperature = _dht->readTemperature();
-    // convert it
-    temperature = _node_manager->celsiusToFahrenheit(temperature);
+    float temperature = _dht->getTemperature();
+    if (! _node_manager->getIsMetric()) temperature = _dht->toFahrenheit(temperature);
     #if DEBUG == 1
       Serial.print(F("DHT I="));
       Serial.print(_child_id);
@@ -1285,8 +1310,7 @@ void SensorDHT::onLoop() {
   // humidity sensor
   else if (_sensor_type == SensorDHT::HUMIDITY) {
     // read humidity
-    float humidity = _dht->readHumidity();
-    if (isnan(humidity)) return;
+    float humidity = _dht->getHumidity();
     #if DEBUG == 1
       Serial.print(F("DHT I="));
       Serial.print(_child_id);
@@ -1305,6 +1329,10 @@ void SensorDHT::onReceive(const MyMessage & message) {
 
 // what to do when receiving a remote message
 void SensorDHT::onProcess(Request & request) {
+}
+
+// what to do when receiving an interrupt
+void SensorDHT::onInterrupt() {
 }
 #endif
 
@@ -1381,6 +1409,10 @@ void SensorSHT21::onReceive(const MyMessage & message) {
 // what to do when receiving a remote message
 void SensorSHT21::onProcess(Request & request) {
 }
+
+// what to do when receiving an interrupt
+void SensorSHT21::onInterrupt() {
+}
 #endif
 
 /*
@@ -1416,45 +1448,25 @@ void SensorSwitch::setInitial(int value) {
 
 // what to do during before
 void SensorSwitch::onBefore() {
-  // initialize the value
-  if (_mode == RISING) _value_int = LOW;
-  else if (_mode == FALLING) _value_int = HIGH;
   // set the interrupt pin so it will be called only when waking up from that interrupt
-  _interrupt_pin = _pin;
-  _node_manager->setInterrupt(_pin,_mode,_initial);
+  setInterrupt(_pin,_mode,_initial);
 }
 
 // what to do during setup
 void SensorSwitch::onSetup() {
+  // report immediately
+  _report_timer->unset();
 }
 
 // what to do during loop
 void SensorSwitch::onLoop() {
-  // wait to ensure the the input is not floating
-  if (_debounce > 0) wait(_debounce);
-  // read the value of the pin
-  int value = digitalRead(_pin);
-  // process the value
-  if ( (_mode == RISING && value == HIGH ) || (_mode == FALLING && value == LOW) || (_mode == CHANGE) )  {
-    #if DEBUG == 1
-      Serial.print(F("SWITCH I="));
-      Serial.print(_child_id);
-      Serial.print(F(" P="));
-      Serial.print(_pin);
-      Serial.print(F(" V="));
-      Serial.println(value);
-    #endif
-    _value_int = value;
-    // allow the signal to be restored to its normal value
-    if (_trigger_time > 0) wait(_trigger_time);
-  } else {
-    // invalid
-    _value_int = -1;
-  }
 }
+
 // what to do as the main task when receiving a message
 void SensorSwitch::onReceive(const MyMessage & message) {
-  if (message.getCommand() == C_REQ) onLoop();
+  if (message.getCommand() == C_REQ) {
+    _value_int = digitalRead(_pin);
+  }
 }
 
 // what to do when receiving a remote message
@@ -1470,6 +1482,31 @@ void SensorSwitch::onProcess(Request & request) {
   _send(_msg_service.set(function));
 }
 
+// what to do when receiving an interrupt
+void SensorSwitch::onInterrupt() {
+  // wait to ensure the the input is not floating
+  if (_debounce > 0) _node_manager->sleepOrWait(_debounce);
+  // read the value of the pin
+  int value = digitalRead(_pin);
+  // process the value
+  if ( (_mode == RISING && value == HIGH ) || (_mode == FALLING && value == LOW) || (_mode == CHANGE) )  {
+    #if DEBUG == 1
+      Serial.print(F("SWITCH I="));
+      Serial.print(_child_id);
+      Serial.print(F(" P="));
+      Serial.print(_pin);
+      Serial.print(F(" V="));
+      Serial.println(value);
+    #endif
+    _value_int = value;
+    // allow the signal to be restored to its normal value
+    if (_trigger_time > 0) _node_manager->sleepOrWait(_trigger_time);
+  } else {
+    // invalid
+    _value_int = -1;
+  }
+}
+
 /*
  * SensorDoor
  */
@@ -1482,8 +1519,6 @@ SensorDoor::SensorDoor(NodeManager* node_manager, int child_id, int pin): Sensor
  */
 SensorMotion::SensorMotion(NodeManager* node_manager, int child_id, int pin): SensorSwitch(node_manager, child_id,pin) {
   setPresentation(S_MOTION);
-  // capture only when it triggers
-  setMode(RISING);
   // set initial value to LOW
   setInitial(LOW);
 }
@@ -1553,6 +1588,10 @@ void SensorDs18b20::onProcess(Request & request) {
   _send(_msg_service.set(function));
 }
 
+// what to do when receiving an interrupt
+void SensorDs18b20::onInterrupt() {
+}
+
 // function to print a device address
 DeviceAddress* SensorDs18b20::getDeviceAddress() {
   return &_device_address;
@@ -1615,6 +1654,11 @@ void SensorBH1750::onReceive(const MyMessage & message) {
 // what to do when receiving a remote message
 void SensorBH1750::onProcess(Request & request) {
 }
+
+
+// what to do when receiving an interrupt
+void SensorBH1750::onInterrupt() {
+}
 #endif
 
 /*
@@ -1663,13 +1707,17 @@ void SensorMLX90614::onReceive(const MyMessage & message) {
 // what to do when receiving a remote message
 void SensorMLX90614::onProcess(Request & request) {
 }
+
+// what to do when receiving an interrupt
+void SensorMLX90614::onInterrupt() {
+}
 #endif
 
 
 /*
    SensorBosch
 */
-#if MODULE_BME280 == 1 || MODULE_BMP085 == 1
+#if MODULE_BME280 == 1 || MODULE_BMP085 == 1 || MODULE_BMP280 == 1
 // contructor
 SensorBosch::SensorBosch(NodeManager* node_manager, int child_id, int sensor_type): Sensor(node_manager, child_id,A4) {
   _sensor_type = sensor_type;
@@ -1731,6 +1779,10 @@ void SensorBosch::onProcess(Request & request) {
     default: return;
   }
   _send(_msg_service.set(function));
+}
+
+// what to do when receiving an interrupt
+void SensorBosch::onInterrupt() {
 }
 
 // calculate and send the forecast back
@@ -1954,6 +2006,54 @@ void SensorBMP085::onLoop() {
 #endif
 
 /*
+ * SensorBMP280
+ */
+#if MODULE_BMP280 == 1
+SensorBMP280::SensorBMP280(NodeManager* node_manager, int child_id, Adafruit_BMP280* bmp, int sensor_type): SensorBosch(node_manager, child_id,sensor_type) {
+  _bmp = bmp;
+}
+
+void SensorBMP280::onLoop() {
+  // temperature sensor
+  if (_sensor_type == SensorBMP280::TEMPERATURE) {
+    // read the temperature
+    float temperature = _bmp->readTemperature();
+    // convert it
+    temperature = _node_manager->celsiusToFahrenheit(temperature);
+    #if DEBUG == 1
+      Serial.print(F("BMP I="));
+      Serial.print(_child_id);
+      Serial.print(F(" T="));
+      Serial.println(temperature);
+    #endif
+    if (isnan(temperature)) return;
+    // store the value
+    _value_float = temperature;
+  }
+  // Pressure Sensor
+  else if (_sensor_type == SensorBMP280::PRESSURE) {
+    // read pressure
+    float pressure = _bmp->readPressure() / 100.0F;
+    if (isnan(pressure)) return;
+    #if DEBUG == 1
+      Serial.print(F("BMP I="));
+      Serial.print(_child_id);
+      Serial.print(F(" P="));
+      Serial.println(pressure);
+    #endif
+    if (isnan(pressure)) return;
+    // store the value
+    _value_float = pressure;
+  }
+  // Forecast Sensor
+  else if (_sensor_type == SensorBMP280::FORECAST) {
+    float pressure = _bmp->readPressure() / 100.0F;
+    _forecast(pressure);
+  }
+}
+#endif
+
+/*
    SensorHCSR04
 */
 #if MODULE_HCSR04 == 1
@@ -2015,6 +2115,10 @@ void SensorHCSR04::onProcess(Request & request) {
   }
   _send(_msg_service.set(function));
 }
+
+// what to do when receiving an interrupt
+void SensorHCSR04::onInterrupt() {
+}
 #endif
 
 /*
@@ -2060,8 +2164,6 @@ void SensorSonoff::onSetup() {
 
 // what to do during loop
 void SensorSonoff::onLoop() {
-  // set the value to -1 so to avoid reporting to the gateway during loop
-  _value_int = -1;
   _debouncer.update();
   // Get the update value from the button
   int value = _debouncer.read();
@@ -2097,6 +2199,10 @@ void SensorSonoff::onProcess(Request & request) {
     default: return;
   }
   _send(_msg_service.set(function));
+}
+
+// what to do when receiving an interrupt
+void SensorSonoff::onInterrupt() {
 }
 
 // toggle the state
@@ -2171,6 +2277,10 @@ void SensorMCP9808::onReceive(const MyMessage & message) {
 
 // what to do when receiving a remote message
 void SensorMCP9808::onProcess(Request & request) {
+}
+
+// what to do when receiving an interrupt
+void SensorMCP9808::onInterrupt() {
 }
 #endif
 
@@ -2288,6 +2398,10 @@ void SensorMQ::onProcess(Request & request) {
     default: return;
   }
   _send(_msg_service.set(function));
+}
+
+// what to do when receiving an interrupt
+void SensorMQ::onInterrupt() {
 }
 
 // returns the calculated sensor resistance
@@ -2441,6 +2555,10 @@ void SensorMHZ19::onProcess(Request & request) {
   _send(_msg_service.set(function));
 }
 
+// what to do when receiving an interrupt
+void SensorMHZ19::onInterrupt() {
+}
+
 #endif
 
 /*
@@ -2518,6 +2636,10 @@ void SensorAM2320::onReceive(const MyMessage & message) {
 
 // what to do when receiving a remote message
 void SensorAM2320::onProcess(Request & request) {
+}
+
+// what to do when receiving an interrupt
+void SensorAM2320::onInterrupt() {
 }
 #endif
 
@@ -2649,12 +2771,16 @@ void SensorTSL2561::onProcess(Request & request) {
   }
   _send(_msg_service.set(function));
 }
+
+// what to do when receiving an interrupt
+void SensorTSL2561::onInterrupt() {
+}
 #endif
 
 /*
    SensorPT100
 */
-
+#if MODULE_PT100 == 1
 // contructor
 SensorPT100::SensorPT100(NodeManager* node_manager, int child_id, int pin): Sensor(node_manager, child_id, pin) {
   // set presentation, type and value type
@@ -2663,7 +2789,7 @@ SensorPT100::SensorPT100(NodeManager* node_manager, int child_id, int pin): Sens
   setValueType(TYPE_FLOAT);
 }
 
-//// setter/getter
+// setter/getter
 void SensorPT100::setVoltageRef(float value) {
    _voltageRef = value;
 }
@@ -2683,7 +2809,6 @@ void SensorPT100::onSetup() {
 void SensorPT100::onLoop() {
   // read the PT100 sensor
   int temperature = _PT100->readTemperature(_pin);  
-  
   #if DEBUG == 1
     Serial.print(F("PT100 I="));
     Serial.print(_child_id);
@@ -2709,6 +2834,112 @@ void SensorPT100::onProcess(Request & request) {
   _send(_msg_service.set(function));
 }
 
+// what to do when receiving an interrupt
+void SensorPT100::onInterrupt() {
+}
+#endif
+
+/*
+   SensorDimmer
+*/
+
+#if MODULE_DIMMER == 1
+// contructor
+SensorDimmer::SensorDimmer(NodeManager* node_manager, int child_id, int pin): Sensor(node_manager, child_id, pin) {
+  // set presentation, type and value type
+  setPresentation(S_DIMMER);
+  setType(V_PERCENTAGE);
+}
+
+// setter/getter
+void SensorDimmer::setEasing(int value) {
+  _easing = value;
+}
+void SensorDimmer::setDuration(int value) {
+  _duration = value*1000;
+}
+void SensorDimmer::setStepDuration(int value) {
+  _duration = value;
+}
+
+// what to do during before
+void SensorDimmer::onBefore() {
+  pinMode(_pin, OUTPUT);
+}
+
+// what to do during setup
+void SensorDimmer::onSetup() {
+}
+
+// what to do during loop
+void SensorDimmer::onLoop() {
+}
+
+// what to do as the main task when receiving a message
+void SensorDimmer::onReceive(const MyMessage & message) {
+  if (message.getCommand() == C_SET) {
+    int percentage = message.getInt();
+    // normalize the provided percentage
+    if (percentage < 0) percentage = 0;
+    if (percentage > 100) percentage = 100;
+    fadeTo(percentage);
+    _value_int = percentage;
+  }
+  if (message.getCommand() == C_REQ) {
+    // return the current status
+    _value_int = _percentage;
+  }
+}
+
+// what to do when receiving a remote message
+void SensorDimmer::onProcess(Request & request) {
+   int function = request.getFunction();
+  switch(function) {
+    case 101: setEasing(request.getValueInt()); break;
+    case 102: setDuration(request.getValueInt()); break;
+    case 103: setStepDuration(request.getValueInt()); break;
+    default: return;
+  }
+  _send(_msg_service.set(function));
+}
+
+// what to do when receiving an interrupt
+void SensorDimmer::onInterrupt() {
+}
+
+// fade to the provided value
+void SensorDimmer::fadeTo(int target_percentage) {
+  #if DEBUG == 1
+    Serial.print(F("DIM I="));
+    Serial.print(_child_id);
+    Serial.print(F(" V="));
+    Serial.println(target_percentage);
+  #endif
+  // count how many steps we need to do
+  int steps = _duration / _step_duration;
+  // for each step
+  for (int current_step = 1; current_step <= steps; current_step++) {
+    // calculate the delta between the target value and the current
+    int delta = target_percentage - _percentage;
+    // calculate the smooth transition and adjust it in the 0-255 range
+    int value_to_write = (int)(_getEasing(current_step,_percentage,delta,steps) / 100. * 255);
+    // write to the PWM output
+    analogWrite(_pin,value_to_write);
+    // wait at the end of this step
+    wait(_step_duration);
+  }
+  _percentage = target_percentage;
+}
+
+// for smooth transitions. t: current time, b: beginning value, c: change in value, d: duration
+float SensorDimmer::_getEasing(float t, float b, float c, float d) {
+  if (_easing == EASE_INSINE) return -c * cos(t/d * (M_PI/2)) + c + b;
+  else if (_easing == EASE_OUTSINE) return c * sin(t/d * (M_PI/2)) + b;
+  else if (_easing == EASE_INOUTSINE) return -c/2 * (cos(M_PI*t/d) - 1) + b;
+  else return c*t/d + b;
+}
+
+#endif
 
 /*******************************************
    NodeManager
@@ -2719,6 +2950,11 @@ NodeManager::NodeManager() {
   // setup the service message container
   _msg = MyMessage(CONFIGURATION_CHILD_ID, V_CUSTOM);
 }
+
+int NodeManager::_last_interrupt_pin = -1;
+long NodeManager::_last_interrupt_1 = millis();
+long NodeManager::_last_interrupt_2 = millis();
+long NodeManager::_interrupt_min_delta = 100;
 
 // setter/getter
 void NodeManager::setRetries(int value) {
@@ -2734,11 +2970,17 @@ int NodeManager::getRetries() {
   void NodeManager::setBatteryMax(float value) {
     _battery_max = value;
   }
-  void NodeManager::setBatteryReportCycles(int value) {
-    _battery_report_timer.set(value,CYCLES);
+  void NodeManager::setBatteryReportSeconds(int value) {
+    _battery_report_timer.set(value,SECONDS);
   }
   void NodeManager::setBatteryReportMinutes(int value) {
     _battery_report_timer.set(value,MINUTES);
+  }
+  void NodeManager::setBatteryReportHours(int value) {
+    _battery_report_timer.set(value,HOURS);
+  }
+  void NodeManager::setBatteryReportDays(int value) {
+    _battery_report_timer.set(value,DAYS);
   }
   void NodeManager::setBatteryInternalVcc(bool value) {
     _battery_internal_vcc = value;
@@ -2753,44 +2995,41 @@ int NodeManager::getRetries() {
     _battery_report_with_interrupt = value;
   }
 #endif
-void NodeManager::setSleepMode(int value) {
-  _sleep_mode = value;
-}
-void NodeManager::setMode(int value) {
-  setSleepMode(value);
-}
-int NodeManager::getMode() {
-  return _sleep_mode;
-}
-void NodeManager::setSleepTime(int value) {
+
+void NodeManager::setSleepSeconds(int value) {
+  // set the status to AWAKE if the time provided is 0, SLEEP otherwise
+  if (value == 0) _status = AWAKE;
+  else _status = SLEEP;
+  // store the time
   _sleep_time = value;
 }
-int NodeManager::getSleepTime() {
+void NodeManager::setSleepMinutes(int value) {
+  setSleepSeconds(value*60);
+}
+void NodeManager::setSleepHours(int value) {
+  setSleepMinutes(value*60);
+}
+void NodeManager::setSleepDays(int value) {
+  setSleepHours(value*24);
+}
+long NodeManager::getSleepSeconds() {
   return _sleep_time;
-}
-void NodeManager::setSleepUnit(int value) {
-  _sleep_unit = value;
-}
-int NodeManager::getSleepUnit() {
-  return _sleep_unit;
-}
-void NodeManager::setSleep(int value1, int value2, int value3) {
-  setMode(value1);
-  setSleepTime(value2);
-  setSleepUnit(value3);
 }
 void NodeManager::setSleepInterruptPin(int value) {
   _sleep_interrupt_pin = value;
 }
-void NodeManager::setInterrupt(int pin, int mode, int pull) {
+void NodeManager::setInterrupt(int pin, int mode, int initial) {
   if (pin == INTERRUPT_PIN_1) {
     _interrupt_1_mode = mode;
-    _interrupt_1_pull = pull;
+    _interrupt_1_initial = initial;
   }
-  if (pin == INTERRUPT_PIN_2) {
+  if (pin == INTERRUPT_PIN_2) { 
     _interrupt_2_mode = mode;
-    _interrupt_2_pull = pull;
+    _interrupt_2_initial = initial;
   }
+}
+void NodeManager::setInterruptMinDelta(long value) {
+  _interrupt_min_delta = value;
 }
 #if POWER_MANAGER == 1
   void NodeManager::setPowerPins(int ground_pin, int vcc_pin, int wait_time) {
@@ -2837,7 +3076,7 @@ float NodeManager::celsiusToFahrenheit(float temperature) {
 
 // return true if sleep or wait is configured and hence this is a sleeping node
 bool NodeManager::isSleepingNode() {
-  if (_sleep_mode == SLEEP || _sleep_mode == WAIT) return true;
+  if (_status == SLEEP) return true;
   return false;
 }
 
@@ -2866,12 +3105,11 @@ int NodeManager::registerSensor(int sensor_type, int pin, int child_id) {
     else if (sensor_type == SENSOR_LATCHING_RELAY) return registerSensor(new SensorLatchingRelay(this,child_id, pin));
   #endif
   #if MODULE_DHT == 1
-    else if (sensor_type == SENSOR_DHT11 || sensor_type == SENSOR_DHT22 || sensor_type == SENSOR_DHT21) {
+    else if (sensor_type == SENSOR_DHT11 || sensor_type == SENSOR_DHT22) {
       int dht_type;
-      if (sensor_type == SENSOR_DHT11) dht_type = DHT11;
-      else if (sensor_type == SENSOR_DHT21) dht_type = DHT21;
-      else if (sensor_type == SENSOR_DHT22) dht_type = DHT22;
-      DHT* dht = new DHT(pin,dht_type);
+      if (sensor_type == SENSOR_DHT11) dht_type = DHT::DHT11;
+      else if (sensor_type == SENSOR_DHT22) dht_type = DHT::DHT22;
+      DHT* dht = new DHT();
       // register temperature sensor
       registerSensor(new SensorDHT(this,child_id,pin,dht,SensorDHT::TEMPERATURE,dht_type));
       // register humidity sensor
@@ -2958,6 +3196,26 @@ int NodeManager::registerSensor(int sensor_type, int pin, int child_id) {
       return registerSensor(new SensorBME280(this,child_id,bme,SensorBME280::FORECAST));
     }
   #endif
+  #if MODULE_BMP280 == 1
+    else if (sensor_type == SENSOR_BMP280) {
+      Adafruit_BMP280* bmp = new Adafruit_BMP280();
+      if (! bmp->begin(SensorBosch::GetI2CAddress(0x58))) {
+        #if DEBUG == 1
+          Serial.println(F("NO BMP"));
+        #endif
+        return -1;
+      }
+      // register temperature sensor
+      registerSensor(new SensorBMP280(this,child_id,bmp,SensorBMP280::TEMPERATURE));
+      child_id = _getAvailableChildId();
+      // register pressure sensor
+      child_id = _getAvailableChildId();
+      registerSensor(new SensorBMP280(this,child_id,bmp,SensorBMP280::PRESSURE));
+      // register forecast sensor
+      child_id = _getAvailableChildId();
+      return registerSensor(new SensorBMP280(this,child_id,bmp,SensorBMP280::FORECAST));
+    }
+  #endif
   #if MODULE_SONOFF == 1
     else if (sensor_type == SENSOR_SONOFF) {
       return registerSensor(new SensorSonoff(this,child_id));
@@ -3032,6 +3290,12 @@ int NodeManager::registerSensor(int sensor_type, int pin, int child_id) {
       return registerSensor(new SensorPT100(this,child_id,pin));
     }
   #endif
+   #if MODULE_DIMMER == 1 
+    else if (sensor_type == SENSOR_DIMMER) {
+      // register the dimmer sensor
+      return registerSensor(new SensorDimmer(this,child_id,pin));
+    }
+  #endif
   else {
     #if DEBUG == 1
       Serial.print(F("INVALID "));
@@ -3043,6 +3307,7 @@ int NodeManager::registerSensor(int sensor_type, int pin, int child_id) {
 
 // attach a built-in or custom sensor to this manager
 int NodeManager::registerSensor(Sensor* sensor) {
+  if (sensor->getChildId() > MAX_SENSORS) return;
   #if DEBUG == 1
     Serial.print(F("REG I="));
     Serial.print(sensor->getChildId());
@@ -3065,12 +3330,14 @@ int NodeManager::registerSensor(Sensor* sensor) {
 
 // un-register a sensor to this manager
 void NodeManager::unRegisterSensor(int sensor_index) {
+  if (sensor_index > MAX_SENSORS) return;
   // unlink the pointer to this sensor
   _sensors[sensor_index] == 0;
 }
 
 // return a sensor given its index
 Sensor* NodeManager::get(int child_id) {
+  if (child_id > MAX_SENSORS) return 0;
   // return a pointer to the sensor from the given child_id
   return _sensors[child_id];
 }
@@ -3080,6 +3347,7 @@ Sensor* NodeManager::getSensor(int child_id) {
 
 // assign a different child id to a sensor'
 bool NodeManager::renameSensor(int old_child_id, int new_child_id) {
+  if (old_child_id > MAX_SENSORS || new_child_id > MAX_SENSORS) return;
   // ensure the old id exists and the new is available
   if (_sensors[old_child_id] == 0 || _sensors[new_child_id] != 0) return false;
   // assign the sensor to new id
@@ -3098,9 +3366,20 @@ void NodeManager::before() {
     Serial.print(F("NodeManager v"));
     Serial.println(VERSION);
   #endif
+  // setup the reboot pin if needed
+  if (_reboot_pin > -1) {
+    #if DEBUG == 1
+      Serial.print("REB P=");
+      Serial.println(_reboot_pin);
+    #endif
+    pinMode(_reboot_pin, OUTPUT);
+    digitalWrite(_reboot_pin, HIGH);
+  }
   // print out MySensors' library capabilities
   #if DEBUG == 1
-    Serial.print(F("LIB R="));
+    Serial.print(F("LIB V="));
+    Serial.print(MYSENSORS_LIBRARY_VERSION);
+    Serial.print(F(" R="));
     Serial.print(MY_CAP_RADIO);
     #ifdef MY_CAP_ENCR
       Serial.print(F(" E="));
@@ -3115,26 +3394,6 @@ void NodeManager::before() {
     Serial.print(F(" B="));
     Serial.println(MY_CAP_RXBUF);
   #endif
-  // setup the sleep interrupt pin
-  if (_sleep_interrupt_pin > -1) {
-    // set the interrupt when the pin is connected to ground
-    setInterrupt(_sleep_interrupt_pin,FALLING,HIGH);
-  }
-  // setup the interrupt pins
-  if (_interrupt_1_mode != MODE_NOT_DEFINED) {
-    pinMode(INTERRUPT_PIN_1,INPUT);
-    if (_interrupt_1_pull > -1) digitalWrite(INTERRUPT_PIN_1,_interrupt_1_pull);
-  }
-  if (_interrupt_2_mode != MODE_NOT_DEFINED) {
-    pinMode(INTERRUPT_PIN_2, INPUT);
-    if (_interrupt_2_pull > -1) digitalWrite(INTERRUPT_PIN_2,_interrupt_2_pull);
-  }
-  #if DEBUG == 1
-    Serial.print(F("INT1 M="));
-    Serial.println(_interrupt_1_mode);
-    Serial.print(F("INT2 M="));
-    Serial.println(_interrupt_2_mode);
-  #endif
   #if PERSIST == 1
     // restore the configuration saved in the eeprom
     _loadConfig();
@@ -3142,16 +3401,25 @@ void NodeManager::before() {
   #if BATTERY_MANAGER == 1 && !defined(MY_GATEWAY_ESP8266)
     // set analogReference to internal if measuring the battery through a pin
     if (! _battery_internal_vcc && _battery_pin > -1) analogReference(INTERNAL);
-    // if not configured report battery every 10 cycles
+    // if not already configured, report battery level every 60 minutes
     if (! _battery_report_timer.isConfigured()) _battery_report_timer.set(60,MINUTES);
     _battery_report_timer.start();
   #endif
+  #if SIGNAL_SENSOR == 1 && defined(MY_SIGNAL_REPORT_ENABLED)
+    // if not already configured, report signal level every 60 minutes
+    if (! _signal_report_timer.isConfigured()) _signal_report_timer.set(60,MINUTES);
+    _signal_report_timer.start();
+  #endif
   // setup individual sensors
-  for (int i = 0; i < MAX_SENSORS; i++) {
+  for (int i = 1; i <= MAX_SENSORS; i++) {
     if (_sensors[i] == 0) continue;
-    // call each sensor's setup()
+    // configure reporting interval
+    if (! _sensors[i]->isReportIntervalConfigured()) _sensors[i]->setReportIntervalSeconds(_report_interval_seconds);
+    // call each sensor's before()
     _sensors[i]->before();
   }
+  // setup the interrupt pins
+  setupInterrupts();
 }
 
 // present NodeManager and its sensors
@@ -3170,8 +3438,14 @@ void NodeManager::presentation() {
     // report battery level
     batteryReport();
   #endif
+  #if SIGNAL_SENSOR == 1 && defined(MY_SIGNAL_REPORT_ENABLED)
+    // present the signal service
+    _present(SIGNAL_CHILD_ID, S_SOUND);
+    // report battery level
+    signalReport();
+  #endif
   // present each sensor
-  for (int i = 0; i < MAX_SENSORS; i++) {
+  for (int i = 1; i <= MAX_SENSORS; i++) {
     if (_sensors[i] == 0) continue;
     // call each sensor's presentation()
     if (_sleep_between_send > 0) sleep(_sleep_between_send);
@@ -3198,7 +3472,7 @@ void NodeManager::setup() {
     _send(_msg.set("STARTED"));
   #endif
   // run setup for all the registered sensors
-  for (int i = 0; i < MAX_SENSORS; i++) {
+  for (int i = 1; i <= MAX_SENSORS; i++) {
     if (_sensors[i] == 0) continue;
     // call each sensor's setup()
     _sensors[i]->setup();
@@ -3208,16 +3482,9 @@ void NodeManager::setup() {
 // run the main function for all the register sensors
 void NodeManager::loop() {
   MyMessage empty;
-  // if in idle mode, do nothing
-  if (_sleep_mode == IDLE) return;
-  // if sleep time is not set, do nothing
-  if ((_sleep_mode == SLEEP || _sleep_mode == WAIT) &&  _sleep_time == 0) return;
   #if BATTERY_MANAGER == 1
-    // update the timer for battery report
-    if (_battery_report_timer.getUnit() == MINUTES) _battery_report_timer.update();
-    if (_battery_report_timer.getUnit() == CYCLES && (_last_interrupt_pin == -1 || _battery_report_with_interrupt)) _battery_report_timer.update();
-    // keep track of the number of sleeping cycles (ignoring if )
-    if (_last_interrupt_pin == -1 || _battery_report_with_interrupt) 
+    // update the timer for battery report when not waking up from an interrupt
+    if (_battery_report_timer.isRunning() && _last_interrupt_pin == -1) _battery_report_timer.update();
     // if it is time to report the battery level
     if (_battery_report_timer.isOver()) {
       // time to report the battery level again
@@ -3226,25 +3493,43 @@ void NodeManager::loop() {
       _battery_report_timer.restart();
     }
   #endif
+  #if SIGNAL_SENSOR == 1 && defined(MY_SIGNAL_REPORT_ENABLED)
+    // update the timer for signal report when not waking up from an interrupt
+    if (_signal_report_timer.isRunning() && _last_interrupt_pin == -1) _signal_report_timer.update();
+    // if it is time to report the signal level
+    if (_signal_report_timer.isOver()) {
+      // time to report the signal level again
+      signalReport();
+      // restart the timer
+      _signal_report_timer.restart();
+    }
+  #endif
   #if POWER_MANAGER == 1
     // turn on the pin powering all the sensors
     if (_auto_power_pins) powerOn();
   #endif
   // run loop for all the registered sensors
-  for (int i = 0; i < MAX_SENSORS; i++) {
-    // skip not configured sensors
+  for (int i = 1; i <= MAX_SENSORS; i++) {
+    // skip unconfigured sensors
     if (_sensors[i] == 0) continue;
-    // if waking up from an interrupt skip all the sensor without that interrupt configured
-    if (_last_interrupt_pin != -1 && _sensors[i]->getInterruptPin() != _last_interrupt_pin) continue;
-    // call each sensor's loop()
-    _sensors[i]->loop(empty);
+    if (_last_interrupt_pin != -1 && _sensors[i]->getInterruptPin() == _last_interrupt_pin) {
+      // if there was an interrupt for this sensor, call the sensor's interrupt() and then loop()
+      _sensors[i]->interrupt();
+      _sensors[i]->loop(empty);
+        // reset the last interrupt pin
+      _last_interrupt_pin = -1;
+    }
+    else if (_last_interrupt_pin == -1) {
+      // if just at the end of a cycle, call the sensor's loop() 
+      _sensors[i]->loop(empty);
+    }
   }
   #if POWER_MANAGER == 1
     // turn off the pin powering all the sensors
     if (_auto_power_pins) powerOff();
   #endif
   // continue/start sleeping as requested
-  if (_sleep_mode == SLEEP || _sleep_mode == WAIT) _sleep();
+  if (isSleepingNode()) _sleep();
 }
 
 // dispacth inbound messages
@@ -3271,7 +3556,7 @@ void NodeManager::receive(const MyMessage &message) {
     #endif
   }
   // dispatch the message to the registered sensor
-  else if (_sensors[message.sensor] != 0) {
+  else if (message.sensor <= MAX_SENSORS && _sensors[message.sensor] != 0) {
     #if POWER_MANAGER == 1
       // turn on the pin powering all the sensors
       if (_auto_power_pins) powerOn();
@@ -3296,7 +3581,7 @@ long NodeManager::getTimestamp() {
     // request the time to the controller
     requestTime();
     // keep asking every 1 second
-    wait(1000);
+    sleepOrWait(1000);
     retries--;
   }  
   return _timestamp;
@@ -3320,7 +3605,6 @@ void NodeManager::process(Request & request) {
       case 2: batteryReport(); return;
       case 11: setBatteryMin(request.getValueFloat()); break;
       case 12: setBatteryMax(request.getValueFloat()); break;
-      case 13: setBatteryReportCycles(request.getValueInt()); break;
       case 14: setBatteryReportMinutes(request.getValueInt()); break;
       case 15: setBatteryInternalVcc(request.getValueInt()); break;
       case 16: setBatteryPin(request.getValueInt()); break;
@@ -3328,21 +3612,27 @@ void NodeManager::process(Request & request) {
       case 18: setBatteryReportWithInterrupt(request.getValueInt()); break;
     #endif
     case 3:
-      setSleepMode(request.getValueInt());
+      setSleepSeconds(request.getValueInt());
       #if PERSIST == 1
-        _saveConfig(SAVE_SLEEP_MODE);
+        _saveConfig();
       #endif
       break;
     case 4:
-      setSleepTime(request.getValueInt());
+      setSleepMinutes(request.getValueInt());
       #if PERSIST == 1
-        _saveConfig(SAVE_SLEEP_TIME);
+        _saveConfig();
       #endif
       break;
     case 5:
-      setSleepUnit(request.getValueInt());
+      setSleepHours(request.getValueInt());
       #if PERSIST == 1
-        _saveConfig(SAVE_SLEEP_UNIT);
+        _saveConfig();
+      #endif
+      break;
+    case 29:
+      setSleepDays(request.getValueInt());
+      #if PERSIST == 1
+        _saveConfig();
       #endif
       break;
     #ifndef MY_GATEWAY_ESP8266
@@ -3363,6 +3653,25 @@ void NodeManager::process(Request & request) {
     #endif
     case 26: unRegisterSensor(request.getValueInt()); break;
     case 27: saveToMemory(0,request.getValueInt()); break;
+    case 28: setInterruptMinDelta(request.getValueInt()); break;
+    case 30: setSleepOrWait(request.getValueInt()); break;
+    case 31: setRebootPin(request.getValueInt()); break;
+    case 32: setADCOff(); break;
+    #if SIGNAL_SENSOR == 1 && defined(MY_SIGNAL_REPORT_ENABLED)
+      case 33: setSignalReportMinutes(request.getValueInt()); break;
+      case 43: setSignalReportSeconds(request.getValueInt()); break;
+      case 44: setSignalReportHours(request.getValueInt()); break;
+      case 45: setSignalReportDays(request.getValueInt()); break;
+      case 34: setSignalCommand(request.getValueInt()); break;
+      case 35: signalReport(); break;
+    #endif
+    case 36: setReportIntervalSeconds(request.getValueInt()); break;
+    case 37: setReportIntervalMinutes(request.getValueInt()); break;
+    case 38: setReportIntervalHours(request.getValueInt()); break;
+    case 39: setReportIntervalDays(request.getValueInt()); break;
+    case 40: setBatteryReportSeconds(request.getValueInt()); break;
+    case 41: setBatteryReportHours(request.getValueInt()); break;
+    case 42: setBatteryReportDays(request.getValueInt()); break;
     default: return; 
   }
   _send(_msg.set(function));
@@ -3406,12 +3715,17 @@ void NodeManager::reboot() {
   #if DEBUG == 1
     Serial.println(F("REBOOT"));
   #endif
-  // Software reboot with watchdog timer. Enter Watchdog Configuration mode:
-  WDTCSR |= (1<<WDCE) | (1<<WDE);
-  // Reset enable
-  WDTCSR= (1<<WDE);
-  // Infinite loop until watchdog reset after 16 ms
-  while(true){}
+  if (_reboot_pin > -1) {
+    // reboot the board through the reboot pin which is connected to RST by setting it to low
+    digitalWrite(_reboot_pin, LOW);
+  } else {
+    // Software reboot with watchdog timer. Enter Watchdog Configuration mode:
+    WDTCSR |= (1<<WDCE) | (1<<WDE);
+    // Reset enable
+    WDTCSR= (1<<WDE);
+    // Infinite loop until watchdog reset after 16 ms
+    while(true){}
+  }
 }
 
 // send NodeManager's the version back to the controller
@@ -3432,7 +3746,7 @@ void NodeManager::wakeup() {
   #if DEBUG == 1
     Serial.println(F("WAKEUP"));
   #endif
-  _sleep_mode = IDLE;
+  _status = AWAKE;
 }
 
 // return the value stored at the requested index from the EEPROM
@@ -3470,6 +3784,140 @@ float NodeManager::getVcc() {
   #endif
 }
 
+// setup the interrupt pins
+void NodeManager::setupInterrupts() {
+  // configure wakeup pin if needed
+  if (_sleep_interrupt_pin > -1) {
+    // set the interrupt when the pin is connected to ground
+    setInterrupt(_sleep_interrupt_pin,FALLING,HIGH);
+  }
+  // setup the interrupt pins
+  if (_interrupt_1_mode != MODE_NOT_DEFINED) {
+    pinMode(INTERRUPT_PIN_1,INPUT);
+    if (_interrupt_1_initial > -1) digitalWrite(INTERRUPT_PIN_1,_interrupt_1_initial);
+    // for non sleeping nodes, we need to handle the interrupt by ourselves  
+    if (_status != SLEEP) attachInterrupt(digitalPinToInterrupt(INTERRUPT_PIN_1), _onInterrupt_1, _interrupt_1_mode);
+  }
+  if (_interrupt_2_mode != MODE_NOT_DEFINED) {
+    pinMode(INTERRUPT_PIN_2, INPUT);
+    if (_interrupt_2_initial > -1) digitalWrite(INTERRUPT_PIN_2,_interrupt_2_initial);
+    // for non sleeping nodes, we need to handle the interrupt by ourselves  
+    if (_status != SLEEP) attachInterrupt(digitalPinToInterrupt(INTERRUPT_PIN_2), _onInterrupt_2, _interrupt_2_mode);
+  }
+  #if DEBUG == 1
+    Serial.print(F("INT P="));
+    Serial.print(INTERRUPT_PIN_1);
+    Serial.print(F(" M="));
+    Serial.println(_interrupt_1_mode);
+    Serial.print(F("INT P="));
+    Serial.print(INTERRUPT_PIN_2);
+    Serial.print(F(" M="));
+    Serial.println(_interrupt_2_mode);
+  #endif
+}
+
+// return the pin from which the last interrupt came
+int NodeManager::getLastInterruptPin() {
+  return _last_interrupt_pin;
+}
+
+// set the default interval in seconds all the sensors will report their measures
+void NodeManager::setReportIntervalSeconds(int value) {
+  _report_interval_seconds = value;
+}
+
+// set the default interval in minutes all the sensors will report their measures
+void NodeManager::setReportIntervalMinutes(int value) {
+  _report_interval_seconds = value*60;
+}
+
+// set the default interval in hours all the sensors will report their measures
+void NodeManager::setReportIntervalHours(int value) {
+  _report_interval_seconds = value*60*60;
+}
+
+// set the default interval in days all the sensors will report their measures
+void NodeManager::setReportIntervalDays(int value) {
+  _report_interval_seconds = value*60*60*24;
+}
+
+// if set and when the board is battery powered, sleep() is always called instead of wait()
+void NodeManager::setSleepOrWait(bool value) {
+  _sleep_or_wait = value;
+}
+
+// set which pin is connected to RST of the board to reboot the board when requested. If not set the software reboot is used instead (default: -1)
+void NodeManager::setRebootPin(int value) {
+  _reboot_pin = value;
+}
+
+// turn the ADC off so to save 0.2 mA
+void NodeManager::setADCOff() {
+  // Disable the ADC by setting the ADEN bit (bit 7) to zero
+  ADCSRA = ADCSRA & B01111111;
+  // Disable the analog comparator by setting the ACD bit (bit 7) to one
+  ACSR = B10000000;
+}
+
+// sleep if the node is a battery powered or wait if it is not for the given number of milliseconds 
+void NodeManager::sleepOrWait(long value) {
+  // if the node is sleeping, sleep-or-wait is enabled and we need to sleep for a decent amount of time, call sleep() otherwise wait()
+  if (isSleepingNode() && _sleep_or_wait && value > 200) sleep(value);
+  else wait(value);
+}
+
+#if SIGNAL_SENSOR == 1 && defined(MY_SIGNAL_REPORT_ENABLED)
+  void NodeManager::setSignalReportSeconds(int value) {
+    _signal_report_timer.set(value,SECONDS);
+  }
+  void NodeManager::setSignalReportMinutes(int value) {
+    _signal_report_timer.set(value,MINUTES);
+  }
+  void NodeManager::setSignalReportHours(int value) {
+    _signal_report_timer.set(value,HOURS);
+  }
+  void NodeManager::setSignalReportDays(int value) {
+    _signal_report_timer.set(value,DAYS);
+  }
+  void NodeManager::setSignalCommand(int value) {
+    _signal_command = value;
+  }
+  void NodeManager::signalReport() {
+    int16_t value = transportGetSignalReport(_signal_command);
+    #if DEBUG == 1
+      Serial.print(F("SIG V="));
+      Serial.println(value);
+    #endif
+    // report signal level
+    MyMessage signal_msg(SIGNAL_CHILD_ID, V_LEVEL);
+    _send(signal_msg.set(value));
+  }
+#endif
+
+// handle an interrupt
+void NodeManager::_onInterrupt_1() {
+  long now = millis();
+  if ( (now - _last_interrupt_1 > _interrupt_min_delta) || (now < _last_interrupt_1) ) {
+    _last_interrupt_pin = INTERRUPT_PIN_1;
+    #if DEBUG == 1
+      Serial.print(F("INT P="));
+      Serial.println(INTERRUPT_PIN_1);
+    #endif
+    _last_interrupt_1 = now;
+  }
+}
+void NodeManager::_onInterrupt_2() {
+  long now = millis();
+  if ( (now - _last_interrupt_2 > _interrupt_min_delta) || (now < _last_interrupt_2) ) {
+    _last_interrupt_pin = INTERRUPT_PIN_2;
+    #if DEBUG == 1
+      Serial.print(F("INT P="));
+      Serial.println(INTERRUPT_PIN_2);
+    #endif
+    _last_interrupt_2 = now;
+  }
+}
+
 // send a message to the network
 void NodeManager::_send(MyMessage & message) {
   // send the message, multiple times if requested
@@ -3498,17 +3946,9 @@ void NodeManager::_send(MyMessage & message) {
 
 // wrapper of smart sleep
 void NodeManager::_sleep() {
-  // reset the last interrupt pin
-  _last_interrupt_pin = -1;
-  // calculate the seconds to sleep
-  long sleep_sec = _sleep_time;
-  if (_sleep_unit == MINUTES) sleep_sec = sleep_sec * 60;
-  else if (_sleep_unit == HOURS) sleep_sec = sleep_sec * 3600;
-  else if (_sleep_unit == DAYS) sleep_sec = sleep_sec * 43200;
-  long sleep_ms = sleep_sec * 1000;
   #if DEBUG == 1
     Serial.print(F("SLEEP "));
-    Serial.print(sleep_sec);
+    Serial.print(_sleep_time);
     Serial.println(F("s"));
   #endif
   #if SERVICE_MESSAGES == 1
@@ -3521,41 +3961,33 @@ void NodeManager::_sleep() {
   #endif
   // go to sleep
   int interrupt = -1;
-  if (_sleep_mode == WAIT) {
-    // wait for the given interval
-    wait(sleep_ms);
-    // send heartbeat to the controller
-    sendHeartbeat(_ack);
-  }
-  else if (_sleep_mode == SLEEP) {
-    // setup interrupt pins
-    int interrupt_1_pin = _interrupt_1_mode == MODE_NOT_DEFINED ? INTERRUPT_NOT_DEFINED  : digitalPinToInterrupt(INTERRUPT_PIN_1);
-    int interrupt_2_pin = _interrupt_2_mode == MODE_NOT_DEFINED ? INTERRUPT_NOT_DEFINED  : digitalPinToInterrupt(INTERRUPT_PIN_2);
-    // enter smart sleep for the requested sleep interval and with the configured interrupts
-    interrupt = sleep(interrupt_1_pin,_interrupt_1_mode,interrupt_2_pin,_interrupt_2_mode,sleep_ms, true);
-    if (interrupt > -1) {
-      // woke up by an interrupt
-      int pin_number = -1;
-      int interrupt_mode = -1;
-      // map the interrupt to the pin
-      if (digitalPinToInterrupt(INTERRUPT_PIN_1) == interrupt) {
-        pin_number = INTERRUPT_PIN_1;
-        interrupt_mode = _interrupt_1_mode;
-      }
-      if (digitalPinToInterrupt(INTERRUPT_PIN_2) == interrupt) {
-        pin_number = INTERRUPT_PIN_2;
-        interrupt_mode = _interrupt_2_mode;
-      }
-      _last_interrupt_pin = pin_number;
-      #if DEBUG == 1
-        Serial.print(F("WAKE P="));
-        Serial.print(pin_number);
-        Serial.print(F(", M="));
-        Serial.println(interrupt_mode);
-      #endif
-      // when waking up from an interrupt on the wakup pin, stop sleeping
-      if (_sleep_interrupt_pin == pin_number) _sleep_mode = IDLE;
+  // setup interrupt pins
+  int interrupt_1_pin = _interrupt_1_mode == MODE_NOT_DEFINED ? INTERRUPT_NOT_DEFINED  : digitalPinToInterrupt(INTERRUPT_PIN_1);
+  int interrupt_2_pin = _interrupt_2_mode == MODE_NOT_DEFINED ? INTERRUPT_NOT_DEFINED  : digitalPinToInterrupt(INTERRUPT_PIN_2);
+  // enter smart sleep for the requested sleep interval and with the configured interrupts
+  interrupt = sleep(interrupt_1_pin,_interrupt_1_mode,interrupt_2_pin,_interrupt_2_mode,_sleep_time*1000, true);
+  if (interrupt > -1) {
+    // woke up by an interrupt
+    int pin_number = -1;
+    int interrupt_mode = -1;
+    // map the interrupt to the pin
+    if (digitalPinToInterrupt(INTERRUPT_PIN_1) == interrupt) {
+      pin_number = INTERRUPT_PIN_1;
+      interrupt_mode = _interrupt_1_mode;
     }
+    if (digitalPinToInterrupt(INTERRUPT_PIN_2) == interrupt) {
+      pin_number = INTERRUPT_PIN_2;
+      interrupt_mode = _interrupt_2_mode;
+    }
+    _last_interrupt_pin = pin_number;
+    #if DEBUG == 1
+      Serial.print(F("INT P="));
+      Serial.print(pin_number);
+      Serial.print(F(", M="));
+      Serial.println(interrupt_mode);
+    #endif
+    // when waking up from an interrupt on the wakup pin, stop sleeping
+    if (_sleep_interrupt_pin == pin_number) _status = AWAKE;
   }
   // coming out of sleep
   #if DEBUG == 1
@@ -3581,12 +4013,13 @@ void NodeManager::_present(int child_id, int type) {
 
 // return the next available child_id
 int NodeManager::_getAvailableChildId() {
-  for (int i = 1; i < MAX_SENSORS; i++) {
+  for (int i = 1; i <= MAX_SENSORS; i++) {
     if (i == CONFIGURATION_CHILD_ID) continue;
     if (i == BATTERY_CHILD_ID) continue;
     // empty place, return it
     if (_sensors[i] == 0) return i;
   }
+  return MAX_SENSORS;
 }
 
 // guess the initial value of a digital output based on the configured interrupt mode
@@ -3599,43 +4032,35 @@ int NodeManager::_getInterruptInitialValue(int mode) {
 // load the configuration stored in the eeprom
 void NodeManager::_loadConfig() {
   if (loadState(EEPROM_SLEEP_SAVED) == 1) {
-    // sleep settings found in the eeprom, restore them
-    _sleep_mode = loadState(EEPROM_SLEEP_MODE);
-    _sleep_time = loadState(EEPROM_SLEEP_TIME_MINOR);
-    int major = loadState(EEPROM_SLEEP_TIME_MAJOR);
-    if (major == 1) _sleep_time =  _sleep_time + 250;
-    else if (major == 2) _sleep_time =  _sleep_time + 250 * 2;
-    else if (major == 3) _sleep_time =  _sleep_time + 250 * 3;
-    _sleep_unit = loadState(EEPROM_SLEEP_UNIT);
+    // load sleep settings
+    int bit_1 = loadState(EEPROM_SLEEP_1);
+    int bit_2 = loadState(EEPROM_SLEEP_2);
+    int bit_3 = loadState(EEPROM_SLEEP_3);
+    _sleep_time = bit_3*255*255 + bit_2*255 + bit_1;
     #if DEBUG == 1
-      Serial.print(F("LOADSLP M="));
-      Serial.print(_sleep_mode);
-      Serial.print(F(" T="));
-      Serial.print(_sleep_time);
-      Serial.print(F(" U="));
-      Serial.println(_sleep_unit);
+      Serial.print(F("LOADSLP T="));
+      Serial.println(_sleep_time);
     #endif
   }
 }
 
 // save the configuration in the eeprom
-void NodeManager::_saveConfig(int what) {
-  if (what == SAVE_SLEEP_MODE) {
-    saveState(EEPROM_SLEEP_SAVED, 1);
-    saveState(EEPROM_SLEEP_MODE, _sleep_mode);
+void NodeManager::_saveConfig() {
+  if (_sleep_time == 0) return;
+  // encode the sleep time in 3 bits
+  int bit_1, bit_2, bit_3 = 0;
+  bit_1 = _sleep_time;
+  if (bit_1 >= 255) {
+    bit_2 = (int)bit_1/255;
+    bit_1 = bit_1 - bit_2*255;
   }
-  else if (what == SAVE_SLEEP_TIME) {
-    // encode sleep time
-    int major = 0;
-    if (_sleep_time > 750) major = 3;
-    else if (_sleep_time > 500) major = 2;
-    else if (_sleep_time > 250) major = 1;
-    int minor = _sleep_time - 250 * major;
-    saveState(EEPROM_SLEEP_SAVED, 1);
-    saveState(EEPROM_SLEEP_TIME_MINOR, minor);
-    saveState(EEPROM_SLEEP_TIME_MAJOR, major);
+  if (bit_2 >= 255) {
+    bit_3 = (int)bit_2/255;
+    bit_2 = bit_2 - bit_3*255;
   }
-  else if (what == SAVE_SLEEP_UNIT) {
-    saveState(EEPROM_SLEEP_UNIT, _sleep_unit);
-  }
+  // save the 3 bits
+  saveState(EEPROM_SLEEP_SAVED,1);
+  saveState(EEPROM_SLEEP_1,bit_1);
+  saveState(EEPROM_SLEEP_2,bit_2);
+  saveState(EEPROM_SLEEP_3,bit_3);
 }

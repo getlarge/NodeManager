@@ -13,18 +13,15 @@
    Constants
 */
 
-// define sleep mode
-#define IDLE 0
+// define board status
+#define AWAKE 0
 #define SLEEP 1
-#define WAIT 2
-#define ALWAYS_ON 3
 
 // define time unit
 #define SECONDS 0
 #define MINUTES 1
 #define HOURS 2
 #define DAYS 3
-#define CYCLES 4
 
 // define on/off
 #define OFF 0
@@ -39,17 +36,11 @@
 #define INTERRUPT_PIN_1 3
 #define INTERRUPT_PIN_2 2
 
-// define configuration settings that can be saved and loaded from the EEPROM
-#define SAVE_SLEEP_MODE 0
-#define SAVE_SLEEP_TIME 1
-#define SAVE_SLEEP_UNIT 2
-
 // define eeprom addresses
 #define EEPROM_SLEEP_SAVED 0
-#define EEPROM_SLEEP_MODE 1
-#define EEPROM_SLEEP_TIME_MAJOR 2
-#define EEPROM_SLEEP_TIME_MINOR 3
-#define EEPROM_SLEEP_UNIT 4
+#define EEPROM_SLEEP_1 5
+#define EEPROM_SLEEP_2 6
+#define EEPROM_SLEEP_3 7
 #define EEPROM_USER_START 100
 
 // define requests
@@ -89,9 +80,13 @@
 #ifndef SERVICE_MESSAGES
   #define SERVICE_MESSAGES 0
 #endif
-// if enabled, a battery sensor will be created at BATTERY_CHILD_ID and will report vcc voltage together with the battery level percentage
+// if enabled, a battery sensor will be created at BATTERY_CHILD_ID (201 by default) and will report vcc voltage together with the battery level percentage
 #ifndef BATTERY_SENSOR
   #define BATTERY_SENSOR 1
+#endif
+// if enabled, a RSSI sensor will be created at SIGNAL_CHILD_ID (202 by default) and will report the signal quality of the transport layer
+#ifndef SIGNAL_SENSOR
+  #define SIGNAL_SENSOR 1
 #endif
 
 // the child id used to allow remote configuration
@@ -102,16 +97,28 @@
 #ifndef BATTERY_CHILD_ID
   #define BATTERY_CHILD_ID 201
 #endif
+// the child id used to report the rssi level to the controller
+#ifndef SIGNAL_CHILD_ID
+  #define SIGNAL_CHILD_ID 202
+#endif
 // define the maximum number of sensors that can be managed
 #ifndef MAX_SENSORS
   #define MAX_SENSORS 10
 #endif
+// define default sketch name and version
+#ifndef SKETCH_NAME
+  #define SKETCH_NAME "NodeManager"
+#endif
+#ifndef SKETCH_VERSION
+  #define SKETCH_VERSION "1.0"
+#endif
+
 
 /***********************************
    Default module settings
 */
 
-// Enable this module to use one of the following sensors: SENSOR_ANALOG_INPUT, SENSOR_LDR, SENSOR_THERMISTOR, SENSOR_ACS712, SENSOR_PT100
+// Enable this module to use one of the following sensors: SENSOR_ANALOG_INPUT, SENSOR_LDR, SENSOR_THERMISTOR, SENSOR_ML8511, SENSOR_ACS712, SENSOR_RAIN_GAUGE, SENSOR_RAIN, SENSOR_SOIL_MOISTURE
 #ifndef MODULE_ANALOG_INPUT
   #define MODULE_ANALOG_INPUT 0
 #endif
@@ -123,17 +130,13 @@
 #ifndef MODULE_DIGITAL_OUTPUT
   #define MODULE_DIGITAL_OUTPUT 0
 #endif
+// Enable this module to use one of the following sensors: SENSOR_DHT11, SENSOR_DHT22
+#ifndef MODULE_DHT
+  #define MODULE_DHT 0
+#endif
 // Enable this module to use one of the following sensors: SENSOR_SHT21, SENSOR_HTU21D
 #ifndef MODULE_SHT21
   #define MODULE_SHT21 0
-#endif
-// Enable this module to use one of the following sensors: SENSOR_AM2320
-#ifndef MODULE_AM2320
-  #define MODULE_AM2320 0
-#endif
-// Enable this module to use one of the following sensors: SENSOR_DHT11, SENSOR_DHT22, SENSOR_DHT21
-#ifndef MODULE_DHT
-  #define MODULE_DHT 0
 #endif
 // Enable this module to use one of the following sensors: SENSOR_SWITCH, SENSOR_DOOR, SENSOR_MOTION
 #ifndef MODULE_SWITCH
@@ -146,10 +149,6 @@
 // Enable this module to use one of the following sensors: SENSOR_BH1750
 #ifndef MODULE_BH1750
   #define MODULE_BH1750 0
-#endif
-// Enable this module to use one of the following sensors: SENSOR_TSL2561
-#ifndef MODULE_TSL2561
-  #define MODULE_TSL2561 0
 #endif
 // Enable this module to use one of the following sensors: SENSOR_MLX90614
 #ifndef MODULE_MLX90614
@@ -182,6 +181,26 @@
 // Enable this module to use one of the following sensors: SENSOR_MHZ19
 #ifndef MODULE_MHZ19
   #define MODULE_MHZ19 0
+#endif
+// Enable this module to use one of the following sensors: SENSOR_AM2320
+#ifndef MODULE_AM2320
+  #define MODULE_AM2320 0
+#endif
+// Enable this module to use one of the following sensors: SENSOR_TSL2561
+#ifndef MODULE_TSL2561
+  #define MODULE_TSL2561 0
+#endif
+// Enable this module to use one of the following sensors: SENSOR_PT100
+#ifndef MODULE_PT100
+  #define SENSOR_PT100 0
+#endif
+// Enable this module to use one of the following sensors: SENSOR_BMP280
+#ifndef MODULE_BMP280
+  #define MODULE_BMP280 0
+#endif
+// Enable this module to use one of the following sensors: SENSOR_DIMMER
+#ifndef MODULE_DIMMER
+  #define MODULE_DIMMER 0
 #endif
 
 /***********************************
@@ -222,7 +241,6 @@ enum supported_sensors {
     // DHT11/DHT22 sensors, return temperature/humidity based on the attached DHT sensor
     SENSOR_DHT11,
     SENSOR_DHT22,
-    SENSOR_DHT21,
   #endif
   #if MODULE_SHT21 == 1
     // SHT21 sensor, return temperature/humidity based on the attached SHT21 sensor
@@ -250,7 +268,7 @@ enum supported_sensors {
     SENSOR_MLX90614,
   #endif
   #if MODULE_BME280 == 1
-    // MLX90614 sensor, contactless temperature sensor
+    // BME280 sensor, return temperature, humidity and pressure
     SENSOR_BME280,
   #endif
   #if MODULE_SONOFF == 1
@@ -289,6 +307,14 @@ enum supported_sensors {
     // High temperature sensor associated with DFRobot Driver, return the temperature in C° from the attached PT100 sensor
     SENSOR_PT100,
   #endif
+  #if MODULE_BMP280 == 1
+    // BMP280 sensor, return temperature and pressure
+    SENSOR_BMP280,
+  #endif
+  #if MODULE_DIMMER == 1
+    // Generic dimmer sensor used to drive a pwm output
+    SENSOR_DIMMER,
+  #endif
 };
  
 /***********************************
@@ -306,6 +332,8 @@ enum supported_sensors {
 // include MySensors libraries
 #include <core/MySensorsCore.h>
 #include <core/MyCapabilities.h>
+#include <core/MyTransport.h>
+#include <core/Version.h>
 
 // include third party libraries
 #if MODULE_DHT == 1
@@ -359,7 +387,15 @@ enum supported_sensors {
   #include <Wire.h>
 #endif
 #if MODULE_PT100 == 1
-  #include<DFRobotHighTemperatureSensor.h>
+  #include <DFRobotHighTemperatureSensor.h>
+#endif
+#if MODULE_BMP280 == 1
+  #include <Wire.h>
+  #include <Adafruit_Sensor.h>
+  #include <Adafruit_BMP280.h>
+#endif
+#if MODULE_DIMMER == 1
+  #include <math.h>
 #endif
 
 /*******************************************************************
@@ -393,39 +429,38 @@ class PowerManager {
 class Timer {
   public:
     Timer(NodeManager* node_manager);
-    // start the timer which will be over when interval passes by. Unit can be either CYCLES or MINUTES
-    void start(long target, int unit);
+    // start the timer which will be over when the configured target passes by
+    void start(int target, int unit);
     void start();
     // stop the timer
     void stop();
+    // reset the timer
+    void reset();
+    // reset the timer and start over
+    void restart();
     // set the timer configuration but do not start it
-    void set(long target, int unit);
+    void set(int target, int unit);
+    void unset();
     // update the timer. To be called at every cycle
     void update();
-    // returns true if the time is over
+    // return true if the time is over
     bool isOver();
     // return true if the timer is running
     bool isRunning();
-    // returns true if the timer has been configured
+    // return true if the timer has been configured
     bool isConfigured();
-    // reset the timer and start over
-    void restart();
+    // return true if this is the first time the timer runs
+    bool isFirstRun();
     // return the current elapsed time
     float getElapsed();
-    // return the configured unit
-    int getUnit();
-    // return the configured target
-    int getTarget();
    private:
     NodeManager* _node_manager;
-    long _target = 0;
-    int _unit = 0;
-    float _elapsed = 0;
-    bool _use_millis = false;
+    int _target = 0;
+    long _elapsed = 0;
     long _last_millis = 0;
-    float _sleep_time = 0;
     bool _is_running = false;
     bool _is_configured = false;
+    bool _first_run = true;
 };
 
 /*
@@ -475,11 +510,10 @@ class Sensor {
     void setSamplesInterval(int value);
     // [7] if true will report the measure only if different than the previous one (default: false)
     void setTrackLastValue(bool value);
-    // [8] if track last value is enabled, force to send an update after the configured number of cycles (default: -1)
-    void setForceUpdate(int value);
-    void setForceUpdateCycles(int value);
-    // [9] if track last value is enabled, force to send an update after the configured number of minutes (default: -1)
+    // [9] if track last value is enabled, force to send an update after the configured number of minutes
     void setForceUpdateMinutes(int value);
+    // [19] if track last value is enabled, force to send an update after the configured number of hours
+    void setForceUpdateHours(int value);
     // [10] the value type of this sensor (default: TYPE_INTEGER)
     void setValueType(int value);
     int getValueType();
@@ -499,19 +533,28 @@ class Sensor {
     int getValueInt();
     float getValueFloat();
     char* getValueString();
-    // [15] After how many cycles the sensor will report back its measure (default: 1 cycle)
-    void setReportIntervalCycles(int value);
-    // [16] After how many minutes the sensor will report back its measure (default: 1 cycle)
+    // [17] After how many minutes the sensor will report back its measure (default: 10 minutes)
+    void setReportIntervalSeconds(int value);
+    // [16] After how many minutes the sensor will report back its measure (default: 10 minutes)
     void setReportIntervalMinutes(int value);
+    // [19] After how many hours the sensor will report back its measure (default: 10 minutes)
+    void setReportIntervalHours(int value);
+    // [20] After how many days the sensor will report back its measure (default: 10 minutes)
+    void setReportIntervalDays(int value);
+    // return true if the report interval has been already configured
+    bool isReportIntervalConfigured();
     // process a remote request
     void process(Request & request);
     // return the pin the interrupt is attached to
     int getInterruptPin();
+    // listen for interrupts on the given pin so interrupt() will be called when occurring
+    void setInterrupt(int pin, int mode, int initial);
     // define what to do at each stage of the sketch
     virtual void before();
     virtual void presentation();
     virtual void setup();
     virtual void loop(const MyMessage & message);
+    virtual void interrupt();
     virtual void receive(const MyMessage & message);
     // abstract functions, subclasses need to implement
     virtual void onBefore() = 0;
@@ -519,6 +562,7 @@ class Sensor {
     virtual void onLoop() = 0;
     virtual void onReceive(const MyMessage & message) = 0;
     virtual void onProcess(Request & request) = 0;
+    virtual void onInterrupt() = 0;
   protected:
     MyMessage _msg;
     MyMessage _msg_service;
@@ -574,6 +618,7 @@ class SensorAnalogInput: public Sensor {
     void onLoop();
     void onReceive(const MyMessage & message);
     void onProcess(Request & request);
+    void onInterrupt();
   protected:
     int _reference = -1;
     bool _reverse = false;
@@ -614,6 +659,7 @@ class SensorThermistor: public Sensor {
     void onLoop();
     void onReceive(const MyMessage & message);
     void onProcess(Request & request);
+    void onInterrupt();
   protected:
     long _nominal_resistor = 10000;
     int _nominal_temperature = 25;
@@ -635,6 +681,7 @@ class SensorML8511: public Sensor {
     void onLoop();
     void onReceive(const MyMessage & message);
     void onProcess(Request & request);
+    void onInterrupt();
   protected:
     float _mapfloat(float x, float in_min, float in_max, float out_min, float out_max);
 };
@@ -656,6 +703,7 @@ class SensorACS712: public Sensor {
     void onLoop();
     void onReceive(const MyMessage & message);
     void onProcess(Request & request);
+    void onInterrupt();
   protected:
     int _ACS_offset = 2500;
     int _mv_per_amp = 185;
@@ -668,24 +716,21 @@ class SensorACS712: public Sensor {
 class SensorRainGauge: public Sensor {
   public:
     SensorRainGauge(NodeManager* node_manager, int child_id, int pin);
-    // [101] set how frequently to report back to the controller in minutes. After reporting the measure is resetted (default: 60)
-    void setReportInterval(int value);
     // [102] set how many mm of rain to count for each tip (default: 0.11)
     void setSingleTip(float value);
+    // set initial value - internal pull up (default: HIGH)
+    void setInitialValue(int value);
     // define what to do at each stage of the sketch
     void onBefore();
     void onSetup();
     void onLoop();
     void onReceive(const MyMessage & message);
     void onProcess(Request & request);
-  public:
-    static void _onTipped();
-    static long _last_tip;
-    static long _count;
+    void onInterrupt();
   protected:
-    int _report_interval = 60;
+    long _count = 0;
     float _single_tip = 0.11;
-    Timer* _timer;
+    int _initial_value = HIGH;
 };
 
 /*
@@ -719,6 +764,7 @@ class SensorDigitalInput: public Sensor {
     void onLoop();
     void onReceive(const MyMessage & message);
     void onProcess(Request & request);
+    void onInterrupt();
 };
 #endif
 
@@ -749,6 +795,7 @@ class SensorDigitalOutput: public Sensor {
     void onLoop();
     void onReceive(const MyMessage & message);
     void onProcess(Request & request);
+    void onInterrupt();
   protected:
     int _on_value = HIGH;
     int _status = OFF;
@@ -806,12 +853,13 @@ class SensorDHT: public Sensor {
     void onLoop();
     void onReceive(const MyMessage & message);
     void onProcess(Request & request);
+    void onInterrupt();
     // constants
     const static int TEMPERATURE = 0;
     const static int HUMIDITY = 1;
   protected:
     DHT* _dht;
-    int _dht_type = DHT11;
+    int _dht_type;
     float _offset = 0;
     int _sensor_type = 0;
 };
@@ -830,6 +878,7 @@ class SensorSHT21: public Sensor {
     void onLoop();
     void onReceive(const MyMessage & message);
     void onProcess(Request & request);
+    void onInterrupt();
     // constants
     const static int TEMPERATURE = 0;
     const static int HUMIDITY = 1;
@@ -869,6 +918,7 @@ class SensorSwitch: public Sensor {
     void onLoop();
     void onReceive(const MyMessage & message);
     void onProcess(Request & request);
+    void onInterrupt();
   protected:
     int _debounce = 0;
     int _trigger_time = 0;
@@ -913,6 +963,7 @@ class SensorDs18b20: public Sensor {
     void onLoop();
     void onReceive(const MyMessage & message);
     void onProcess(Request & request);
+    void onInterrupt();
   protected:
     float _offset = 0;
     int _index;
@@ -935,6 +986,7 @@ class SensorBH1750: public Sensor {
     void onLoop();
     void onReceive(const MyMessage & message);
     void onProcess(Request & request);
+    void onInterrupt();
   protected:
     BH1750* _lightSensor;
 };
@@ -953,6 +1005,7 @@ class SensorMLX90614: public Sensor {
     void onLoop();
     void onReceive(const MyMessage & message);
     void onProcess(Request & request);
+    void onInterrupt();
     // constants
     const static int TEMPERATURE_AMBIENT = 0;
     const static int TEMPERATURE_OBJECT = 1;
@@ -967,7 +1020,7 @@ class SensorMLX90614: public Sensor {
  * SensorBosch
 */
 
-#if MODULE_BME280 == 1 || MODULE_BMP085 == 1
+#if MODULE_BME280 == 1 || MODULE_BMP085 == 1 || MODULE_BMP280 == 1
 class SensorBosch: public Sensor {
   public:
     SensorBosch(NodeManager* node_manager, int child_id, int sensor_type);
@@ -979,6 +1032,7 @@ class SensorBosch: public Sensor {
     void onLoop();
     void onReceive(const MyMessage & message);
     void onProcess(Request & request);
+    void onInterrupt();
     // constants
     const static int TEMPERATURE = 0;
     const static int HUMIDITY = 1;
@@ -1027,6 +1081,19 @@ class SensorBMP085: public SensorBosch {
 #endif
 
 /*
+   SensorBMP280
+*/
+#if MODULE_BMP280 == 1
+class SensorBMP280: public SensorBosch {
+  public:
+    SensorBMP280(NodeManager* node_manager, int child_id, Adafruit_BMP280* bmp, int sensor_type);
+    void onLoop();
+  protected:
+    Adafruit_BMP280* _bmp;
+};
+#endif
+
+/*
    SensorHCSR04
 */
 #if MODULE_HCSR04 == 1
@@ -1045,6 +1112,7 @@ class SensorHCSR04: public Sensor {
     void onLoop();
     void onReceive(const MyMessage & message);
     void onProcess(Request & request);
+    void onInterrupt();
   protected:
     int _trigger_pin;
     int _echo_pin;
@@ -1072,6 +1140,7 @@ class SensorSonoff: public Sensor {
     void onLoop();
     void onReceive(const MyMessage & message);
     void onProcess(Request & request);
+    void onInterrupt();
   protected:
     Bounce _debouncer = Bounce();
     int _button_pin = 0;
@@ -1101,6 +1170,7 @@ class SensorMCP9808: public Sensor {
     void onLoop();
     void onReceive(const MyMessage & message);
     void onProcess(Request & request);
+    void onInterrupt();
   protected:
     Adafruit_MCP9808* _mcp;
 };
@@ -1141,6 +1211,7 @@ class SensorMQ: public Sensor {
     void onLoop();
     void onReceive(const MyMessage & message);
     void onProcess(Request & request);
+    void onInterrupt();
   protected:
     float _rl_value = 1.0;
     float _ro_clean_air_factor = 9.83;
@@ -1176,13 +1247,14 @@ class SensorMHZ19: public Sensor {
     SensorMHZ19(NodeManager* node_manager, int child_id, int pin);
     // set the pins for RX and TX of the SoftwareSerial (default: Rx=6, Tx=7)
     void setRxTx(int rxpin, int txpin);
+    int readCO2();
     // define what to do at each stage of the sketch
     void onBefore();
     void onSetup();
     void onLoop();
     void onReceive(const MyMessage & message);
     void onProcess(Request & request);
-    int readCO2();
+    void onInterrupt();
   protected:
     SoftwareSerial* _ser;
     int _tx_pin = 6;
@@ -1203,6 +1275,7 @@ class SensorAM2320: public Sensor {
     void onLoop();
     void onReceive(const MyMessage & message);
     void onProcess(Request & request);
+    void onInterrupt();
     // constants
     const static int TEMPERATURE = 0;
     const static int HUMIDITY = 1;
@@ -1233,6 +1306,7 @@ class SensorTSL2561: public Sensor {
     void onLoop();
     void onReceive(const MyMessage & message);
     void onProcess(Request & request);
+    void onInterrupt();
     // constants
     const static int ADDR_FLOAT = 0;
     const static int ADDR_LOW = 1;
@@ -1258,7 +1332,7 @@ class SensorTSL2561: public Sensor {
 /*
     SensorPT100
 */
-
+#if MODULE_PT100 == 1
 class SensorPT100: public Sensor {
   public:
     SensorPT100(NodeManager* node_manager, int child_id, int pin);
@@ -1270,10 +1344,49 @@ class SensorPT100: public Sensor {
     void onLoop();
     void onReceive(const MyMessage & message);
     void onProcess(Request & request);
+    void onInterrupt();
   protected:
     DFRobotHighTemperature* _PT100;
     float _voltageRef = 3.3;
 };
+#endif
+
+/*
+    SensorPT100
+*/
+#if MODULE_DIMMER == 1
+class SensorDimmer: public Sensor {
+  public:
+    SensorDimmer(NodeManager* node_manager, int child_id, int pin);
+    // [101] set the effect to use for a smooth transition, can be one of SensorDimmer::EASE_LINEAR, SensorDimmer::EASE_INSINE, SensorDimmer::EASE_OUTSINE, SensorDimmer::EASE_INOUTSINE (default: EASE_LINEAR)
+    void setEasing(int value);
+    // [102] the duration of entire the transition in seconds (default: 1)
+    void setDuration(int value);
+    // [103] the duration of a single step of the transition in milliseconds (default: 100)
+    void setStepDuration(int value);
+    // fade the output from the current value to the target provided in the range 0-100
+    void fadeTo(int value);
+    enum easing {
+      EASE_LINEAR,
+      EASE_INSINE,
+      EASE_OUTSINE,
+      EASE_INOUTSINE,
+    };
+    // define what to do at each stage of the sketch
+    void onBefore();
+    void onSetup();
+    void onLoop();
+    void onReceive(const MyMessage & message);
+    void onProcess(Request & request);
+    void onInterrupt();
+  protected:
+    int _percentage = 0;
+    int _easing = EASE_LINEAR;
+    int _duration = 1000;
+    int _step_duration = 100;
+    float _getEasing(float t, float b, float c, float d);
+};
+#endif
 
 /***************************************
    NodeManager: manages all the aspects of the node
@@ -1289,10 +1402,14 @@ class NodeManager {
       void setBatteryMin(float value);
       // [12] the expected vcc when the batter is fully charged, used to calculate the percentage (default: 3.3)
       void setBatteryMax(float value);
-      // [13] after how many sleeping cycles report the battery level to the controller. When reset the battery is always reported (default: -)
-      void setBatteryReportCycles(int value);
-      // [14] after how many minutes report the battery level to the controller. When reset the battery is always reported (default: 60)
+      // [14] after how many minutes report the battery level to the controller. When reset the battery is always reported (default: 60 minutes)
       void setBatteryReportMinutes(int value);
+      // [40] after how many minutes report the battery level to the controller. When reset the battery is always reported (default: 60 minutes)
+      void setBatteryReportSeconds(int value);
+      // [41] after how many minutes report the battery level to the controller. When reset the battery is always reported (default: 60 minutes)
+      void setBatteryReportHours(int value);
+      // [42] after how many minutes report the battery level to the controller. When reset the battery is always reported (default: 60 minutes)
+      void setBatteryReportDays(int value);
       // [15] if true, the battery level will be evaluated by measuring the internal vcc without the need to connect any pin, if false the voltage divider methon will be used (default: true)
       void setBatteryInternalVcc(bool value);
       // [16] if setBatteryInternalVcc() is set to false, the analog pin to which the battery's vcc is attached (https://www.mysensors.org/build/battery) (default: -1)
@@ -1304,22 +1421,21 @@ class NodeManager {
       // [2] Send a battery level report to the controller
       void batteryReport();
     #endif
-    // [3] define the way the node should behave. It can be (0) IDLE (stay awake withtout executing each sensors' loop), (1) SLEEP (go to sleep for the configured interval), (2) WAIT (wait for the configured interval), (3) ALWAYS_ON (stay awake and execute each sensors' loop)
-    void setSleepMode(int value);
-    void setMode(int value);
-    int getMode();
-    // [4] define for how long the board will sleep (default: 0)
-    void setSleepTime(int value);
-    int getSleepTime();
-    // [5] define the unit of SLEEP_TIME. It can be SECONDS, MINUTES, HOURS or DAYS (default: MINUTES)
-    void setSleepUnit(int value);
-    int getSleepUnit();
-    // configure the node's behavior, parameters are mode, time and unit
-    void setSleep(int value1, int value2, int value3);
+    // [3] set the duration (in seconds) of a sleep cycle
+    void setSleepSeconds(int value);
+    long getSleepSeconds();
+    // [4] set the duration (in minutes) of a sleep cycle
+    void setSleepMinutes(int value);
+    // [5] set the duration (in hours) of a sleep cycle
+    void setSleepHours(int value);
+    // [29] set the duration (in days) of a sleep cycle
+    void setSleepDays(int value);
     // [19] if enabled, when waking up from the interrupt, the board stops sleeping. Disable it when attaching e.g. a motion sensor (default: true)
     void setSleepInterruptPin(int value);
     // configure the interrupt pin and mode. Mode can be CHANGE, RISING, FALLING (default: MODE_NOT_DEFINED)
-    void setInterrupt(int pin, int mode, int pull = -1);
+    void setInterrupt(int pin, int mode, int initial = -1);
+    // [28] ignore two consecutive interrupts if happening within this timeframe in milliseconds (default: 100)
+    void setInterruptMinDelta(long value);
     // [20] optionally sleep interval in milliseconds before sending each message to the radio network (default: 0)
     void setSleepBetweenSend(int value);
     int getSleepBetweenSend();
@@ -1376,6 +1492,40 @@ class NodeManager {
     void saveToMemory(int index, int value);
     // return vcc in V
     float getVcc();
+    // setup the configured interrupt pins
+    void setupInterrupts();
+    // return the pin from which the last interrupt came
+    int getLastInterruptPin();
+    // [36] set the default interval in minutes all the sensors will report their measures. If the same function is called on a specific sensor, this will not change the previously set value. or sleeping sensors, the elapsed time can be evaluated only upon wake up (default: 10 minutes)
+    void setReportIntervalSeconds(int value);
+    // [37] set the default interval in minutes all the sensors will report their measures. If the same function is called on a specific sensor, this will not change the previously set value. or sleeping sensors, the elapsed time can be evaluated only upon wake up (default: 10 minutes)
+    void setReportIntervalMinutes(int value);
+    // [38] set the default interval in minutes all the sensors will report their measures. If the same function is called on a specific sensor, this will not change the previously set value. or sleeping sensors, the elapsed time can be evaluated only upon wake up (default: 10 minutes)
+    void setReportIntervalHours(int value);
+    // [39] set the default interval in minutes all the sensors will report their measures. If the same function is called on a specific sensor, this will not change the previously set value. or sleeping sensors, the elapsed time can be evaluated only upon wake up (default: 10 minutes)
+    void setReportIntervalDays(int value);
+    // [30] if set and when the board is battery powered, sleep() is always called instead of wait() (default: true)
+    void setSleepOrWait(bool value);
+    // sleep if the node is a battery powered or wait if it is not for the given number of milliseconds 
+    void sleepOrWait(long value);
+    // [31] set which pin is connected to RST of the board to reboot the board when requested. If not set the software reboot is used instead (default: -1)
+    void setRebootPin(int value);
+    // [32] turn the ADC off so to save 0.2 mA
+    void setADCOff();
+    #if SIGNAL_SENSOR == 1 && defined(MY_SIGNAL_REPORT_ENABLED)
+      // [33] How frequenly to send a signal report to the controller (default: 60 minutes)
+      void setSignalReportMinutes(int value);
+      // [43] How frequenly to send a signal report to the controller (default: 60 minutes)
+      void setSignalReportSeconds(int value);
+      // [44] How frequenly to send a signal report to the controller (default: 60 minutes)
+      void setSignalReportHours(int value);
+      // [45] How frequenly to send a signal report to the controller (default: 60 minutes)
+      void setSignalReportDays(int value);
+      // [34] define which signal report to send. Possible values are SR_UPLINK_QUALITY, SR_TX_POWER_LEVEL, SR_TX_POWER_PERCENT, SR_TX_RSSI, SR_RX_RSSI, SR_TX_SNR, SR_RX_SNR (default: SR_RX_RSSI)
+      void setSignalCommand(int value);
+      // [35] report the signal level to the controller
+      void signalReport();
+    #endif
     // hook into the main sketch functions
     void before();
     void presentation();
@@ -1383,6 +1533,9 @@ class NodeManager {
     void loop();
     void receive(const MyMessage & msg);
     void receiveTime(unsigned long ts);
+    // handle interrupts
+    static void _onInterrupt_1();
+    static void _onInterrupt_2();
   private:
     #if BATTERY_MANAGER == 1
       float _battery_min = 2.6;
@@ -1398,21 +1551,27 @@ class NodeManager {
       PowerManager _powerManager;
       bool _auto_power_pins = true;
     #endif
+    #if SIGNAL_SENSOR == 1 && defined(MY_SIGNAL_REPORT_ENABLED)
+      Timer _signal_report_timer = Timer(this);
+      int _signal_command = SR_RX_RSSI;
+    #endif
     MyMessage _msg;
     void _send(MyMessage & msg);
-    int _sleep_mode = IDLE;
-    int _sleep_time = 0;
-    int _sleep_unit = MINUTES;
+    int _status = AWAKE;
+    long _sleep_time = 0;
     int _sleep_interrupt_pin = -1;
     int _sleep_between_send = 0;
     int _retries = 1;
     int _interrupt_1_mode = MODE_NOT_DEFINED;
     int _interrupt_2_mode = MODE_NOT_DEFINED;
-    int _interrupt_1_pull = -1;
-    int _interrupt_2_pull = -1;
-    int _last_interrupt_pin = -1;
+    int _interrupt_1_initial = -1;
+    int _interrupt_2_initial = -1;
+    static int _last_interrupt_pin;
+    static long _interrupt_min_delta;
+    static long _last_interrupt_1;
+    static long _last_interrupt_2;
     long _timestamp = -1;
-    Sensor* _sensors[MAX_SENSORS] = {0};
+    Sensor* _sensors[MAX_SENSORS+1] = {0};
     bool _ack = false;
     void _sleep();
     void _present(int child_id, int type);
@@ -1420,8 +1579,11 @@ class NodeManager {
     int _getInterruptInitialValue(int mode);
     bool _get_controller_config = true;
     int _is_metric = 1;
+    int _report_interval_seconds = 10*60;
+    bool _sleep_or_wait = true;
+    int _reboot_pin = -1;
     void _loadConfig();
-    void _saveConfig(int what);
+    void _saveConfig();
 };
 
 #endif
