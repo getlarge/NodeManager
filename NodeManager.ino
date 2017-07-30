@@ -1,3 +1,4 @@
+
 /*
 NodeManager is intended to take care on your behalf of all those common tasks a MySensors node has to accomplish, speeding up the development cycle of your projects.
 NodeManager includes the following main components:
@@ -30,13 +31,10 @@ void before() {
   Serial.begin(MY_BAUD_RATE);  
 
   /*
-   * Register below your device specific config
-  */
-
-   
-  /*
    * Register below your sensors
   */
+
+
 
 
   /*
