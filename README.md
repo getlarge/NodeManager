@@ -372,7 +372,7 @@ The next step is to configure NodeManager with settings which will instruct how 
       void setSignalCommand(int value);
       // [35] report the signal level to the controller
       void signalReport();
-    #endif
+
 ~~~
 
 ### Set reporting intervals and sleeping cycles

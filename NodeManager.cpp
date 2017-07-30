@@ -323,7 +323,6 @@ void Sensor::setReportIntervalDays(int value) {
   _report_timer->start(value,DAYS);
 }
 
-
 // return true if the report interval has been already configured
 bool Sensor::isReportIntervalConfigured() {
   return _report_timer->isConfigured();
@@ -3523,7 +3522,10 @@ void NodeManager::loop() {
       // if just at the end of a cycle, call the sensor's loop() 
       _sensors[i]->loop(empty);
     }
+
   }
+  // reset the last interrupt pin
+  _last_interrupt_pin = -1;
   #if POWER_MANAGER == 1
     // turn off the pin powering all the sensors
     if (_auto_power_pins) powerOff();
